@@ -4,7 +4,7 @@
 
 <!-- badges: end -->
 
-## **F**usion **S**imilarity **M**atrix **B**est **L**inear **U**nbiased **P**rediction
+## **F**usion **S**imilarity **B**est **L**inear **U**nbiased **P**rediction
 
 ## CONTENES
 
@@ -198,12 +198,12 @@ fs = FSBLUP(phe = phenotype, trait_col = 2, pedi = pedi, snp = snp, omic = omic,
 3.  Change the sample number and validation number for cross_validation:
 
 ``` r
-fs = FSBLUP(phe = phenotype, trait_col = 2, M1 = A_mat, M2 = G_mat, M3 = O_mat, po.crv.num = 5, po.crv.rep.num = 2)
+fs = FSBLUP(phe = phenotype, trait_col = 2, M1 = A_mat, M2 = G_mat, M3 = O_mat, crv_num = 5, crv_rep_num = 2)
 # phe: phenotype
 # trait_col, the column number of predicted phenotype
 # M1/M2/M3: basic kinship matrix calculated by pedigree/snp/omics data
-# po.crv.num: fold number of the cross validation in parameter optimization, default 5
-# po.crv.rep.num: repeat number of the cross validation in parameter optimization default 2
+# crv_num: fold number of the cross validation in parameter optimization, default 5
+# crv_rep_num: repeat number of the cross validation in parameter optimization default 2
 ```
 
 4.  Change the classification variable for time order validation:
@@ -221,22 +221,22 @@ fs = FSBLUP(phe = phenotype, trait_col = 2, M1 = A_mat, M2 = G_mat, M3 = O_mat, 
 5.  Change the start points number of grid search procedure
 
 ``` r
-fs = FSBLUP(phe = phenotype, trait_col = 2, M1 = A_mat, M2 = G_mat, M3 = O_mat, po.gs.point_num = 25)
+fs = FSBLUP(phe = phenotype, trait_col = 2, M1 = A_mat, M2 = G_mat, M3 = O_mat, gs_size = 25)
 # phe: phenotype
 # trait_col, the column number of predicted phenotype
 # M1/M2/M3: basic kinship matrix calculated by pedigree/snp/omics data
-# po.gs.point_num: start points number, \sqrt(po.gs.point_num) is the iteration step of parameters in two direction, default 25
+# gs_size: start points number, \sqrt(gs_size) is the iteration step of parameters in two direction, default 25
 ```
 
 6.  Change the threshold between two iterations, and the maximum iteration number of adaptive bisection algorithm
 
 ``` r
-fs = FSBLUP(phe = phenotype, trait_col = 2, M1 = A_mat, M2 = G_mat, M3 = O_mat, po.bi.max_iter = 10, po.bi.threshold = 1e-4)
+fs = FSBLUP(phe = phenotype, trait_col = 2, M1 = A_mat, M2 = G_mat, M3 = O_mat, bi_max_iter = 10, bi_threshold = 1e-4)
 # phe: phenotype
 # trait_col, the column number of predicted phenotype
 # M1/M2/M3: basic kinship matrix calculated by pedigree/snp/omics data
-# po.bi.max_iter: the max number of iteration for bisection algorithm, default 10
-# po.bi.threshold: the threshold between two iterations, stop bisection if reaches, default 1e-4
+# bi_max_iter: the max number of iteration for bisection algorithm, default 10
+# bi_threshold: the threshold between two iterations, stop bisection if reaches, default 1e-4
 ```
 
 ### Advanced
@@ -282,6 +282,16 @@ fs = FSBLUP(phe = phenotype, trait_col = 2, M1 = A_mat, M2 = G_mat, M3 = O_mat, 
 # stas.fn: custom function, valid only when "type = other". 
 # Note that in custom function, only supplise two parameters (X1 and X2), X1 represents the predicted GEBVs, X2 represents the target column in phentoype 
 # e.g. fn = function(X1, X2) {val = cor(X1, X2); return(val)}
+```
+
+11. Under constrain mode
+
+``` r
+fs = FSBLUP(phe = phenotype, trait_col = 2, M1 = A_mat, M2 = G_mat, M3 = O_mat, constrain_weights = TRUE)
+# phe: phenotype
+# trait_col, the column number of predicted phenotype
+# M1/M2/M3: basic kinship matrix calculated by pedigree/snp/omics data
+# constrain_weights: keep parametrs $\alpha$ and $\beta$ belongs to `[0, 1]` and sums < 1)
 ```
 
 ## OUTPUT
