@@ -85,6 +85,7 @@ FSBLUP.GridSearch <- function(
   }
 
   cat("\nGrid search finish with ", difftime(Sys.time(), start_time1, units = "mins"), " minutes \n")
+  
   return(acc_df)
 }
 
@@ -121,6 +122,7 @@ FSBLUP.Bisection <- function(
 )
 {
   start_time1 <- Sys.time()
+  times = data.frame()
   require(purrr)
 
   best_index <- which.max(acc_df$cor)
@@ -136,6 +138,17 @@ FSBLUP.Bisection <- function(
 
     new_points <- expand.grid(a = c(best_a - step_a, best_a + step_a),
                               b = c(best_b - step_b, best_b + step_b))
+							  
+	extr_args <- list(...)
+    if("constrain_weights" %in% names(extr_args)) {
+    	if(extr_args["constrain_weights"] == "TRUE")
+    		new_points <- new_points %>% 
+    			filter(a >= 0, a <= 1, b >= 0, b <= 1, a + b <= 1)
+			if (nrow(new_points) == 0) {
+				cli::cli_alert_warning("In round {iter_num_run} of bisection, no effective parameters under constrain mode, stop iterations !")
+				break
+			}
+    }
 
     if(length(train.id) == 0 & length(test.id) == 0)
     {
@@ -155,7 +168,6 @@ FSBLUP.Bisection <- function(
       stop("\n\n parameters error in bisection !!! \n\n")
     }
 
-
     new_best_index <- which.max(new_cor$cor)
     new_best_a <- new_points$a[new_best_index]
     new_best_b <- new_points$b[new_best_index]
@@ -163,11 +175,11 @@ FSBLUP.Bisection <- function(
 
 
     if (abs(new_best_cor - best_cor) < threshold) {
-      break
+	  break
     }
 
     if ((new_best_cor - best_cor) > 0.05) {
-
+	
       step_a <- step_a / 2
       step_b <- step_b / 2
     } else if ((new_best_cor - best_cor) < 0.05) {
@@ -572,10 +584,10 @@ tv.cal_ab <- function(
 #'
 
 FSBLUP.CrossV <- function(
-    phe_cv, M1, M2, M3, trait_col, fixed_eff, crv.num, crv.rep.num, gs.point_num, bi.max_iter, bi.threshold, stas.phe.col, stas.type, stas.fn
+    phe_cv, M1, M2, M3, trait_col, fixed_eff, crv.num, crv.rep.num, gs.point_num, bi.max_iter, bi.threshold, stas.phe.col, stas.type, stas.fn, ...
 )
 {
-
+	 
   wind <- Sys.info()[['sysname']] == 'Windows'
   linux <- Sys.info()[['sysname']] == 'Linux'
   mac <- (!linux) & (!wind)
@@ -592,12 +604,12 @@ FSBLUP.CrossV <- function(
   find_ab <- FSBLUP.GridSearch(fn = cv.cal_ab, x = c(0,1),y = c(0,1), point_num = gs.point_num,
                                    phe_ab = phe_cv, trait = y, M1 = M1, M2 = M2, M3 = M3, fixed_eff = fixed_eff,
                                   crv.num = crv.num, crv.rep.num = crv.rep.num,
-                                  stas.phe.col = stas.phe.col, stas.type = stas.type, stas.fn = stas.fn)
+                                  stas.phe.col = stas.phe.col, stas.type = stas.type, stas.fn = stas.fn, ...)
   cat("Start bisection procedure ... \n")
   find_ab <- FSBLUP.Bisection(find_ab, fn = cv.cal_ab, max_iter = bi.max_iter, threshold = bi.threshold,
                                  phe_ab = phe_cv, trait = y, M1 = M1, M2 = M2, M3 = M3, fixed_eff = fixed_eff,
                                  crv.num = crv.num, crv.rep.num = crv.rep.num,
-                                 stas.phe.col = stas.phe.col, stas.type = stas.type, stas.fn = stas.fn)
+                                 stas.phe.col = stas.phe.col, stas.type = stas.type, stas.fn = stas.fn, ...)
 
   return(find_ab)
 }
@@ -623,7 +635,7 @@ FSBLUP.CrossV <- function(
 #'
 
 FSBLUP.TimeV <- function(
-    phe_cv, M1, M2, M3, trait_col, fixed_eff, train.id, test.id, gs.point_num, bi.max_iter, bi.threshold, stas.phe.col, stas.type, stas.fn
+    phe_cv, M1, M2, M3, trait_col, fixed_eff, train.id, test.id, gs.point_num, bi.max_iter, bi.threshold, stas.phe.col, stas.type, stas.fn, ...
 )
 {
 
@@ -643,12 +655,12 @@ FSBLUP.TimeV <- function(
   find_ab <- FSBLUP.GridSearch(fn = tv.cal_ab, x = c(0,1),y = c(0,1), point_num = gs.point_num,
                                   phe_ab = phe_cv, trait = y, M1 = M1, M2 = M2, M3 = M3, fixed_eff = fixed_eff,
                                   train.id = train.id, test.id = test.id,
-                                  stas.phe.col = stas.phe.col, stas.type = stas.type, stas.fn = stas.fn)
+                                  stas.phe.col = stas.phe.col, stas.type = stas.type, stas.fn = stas.fn, ...)
   cat("Start bisection procedures ... ")
   find_ab <- FSBLUP.Bisection(find_ab, fn = tv.cal_ab, max_iter = bi.max_iter, threshold = bi.threshold,
                                  phe_ab = phe_cv, trait = y, M1 = M1, M2 = M2, M3 = M3, fixed_eff = fixed_eff,
                                  train.id = train.id, test.id = test.id,
-                                 stas.phe.col = stas.phe.col, stas.type = stas.type, stas.fn = stas.fn)
+                                 stas.phe.col = stas.phe.col, stas.type = stas.type, stas.fn = stas.fn, ...)
   return(find_ab)
 }
 
@@ -709,9 +721,9 @@ FSBLUP.Omatrix <- function(data = NULL, missing.value = NA, FPKM.qc = FALSE) {
 #' @param po.crv.rep.num repeat times of cross validation in parameter optimization procedure
 #' @param po.year year variable col of time order validation in parameter optimization procedure
 #' @param po.ngen ngen variable col of time order validation in parameter optimization procedure
-#' @param po.gs.point_num grid search point number, default 25
-#' @param po.bi.max_iter bisection maximum iterations
-#' @param po.bi.threshold bisection stop  threshold between two iterations
+#' @param gs_size grid search point number, default 25
+#' @param bi_max_iter bisection maximum iterations
+#' @param bi_threshold bisection stop  threshold between two iterations
 #' @param stas.phe.col target trait when calculate the indicator, default as @inheritParams trait_col
 #' @param stas.type indicator when optimize the fusion matrix
 #' @param stas.fn custom calculated indicators
@@ -726,14 +738,13 @@ FSBLUP.Omatrix <- function(data = NULL, missing.value = NA, FPKM.qc = FALSE) {
 FSBLUP <- function(
     phe = NULL, M1 = NULL, M2 = NULL, M3 = NULL, pedi = NULL, snp = NULL, omic = NULL, FPKM.qc = TRUE, fix.col = NULL,
     trait_col = NULL, po.crv.num = 5, po.crv.rep.num=2, po.year = NULL, po.ngen = NULL,
-    po.gs.point_num = 25, po.bi.max_iter = 10, po.bi.threshold = 1e-4,
-    stas.type = "cor", stas.fn = NULL, stas.phe.col = NULL, return.matrix = FALSE
+    gs_size = 25, bi_max_iter = 10, bi_threshold = 1e-4, constrain_weights=FALSE,
+    stas.type = "cor", stas.fn = NULL, stas.phe.col = NULL, return.matrix = FALSE, ...
 )
 {
   FSBLUP.version()
 
   start_time = Sys.time()
-
 
   if(is.null(M1) & is.null(M2) & is.null(M3)) {
     if(is.null(pedi) & is.null(snp) & is.null(omic)) {
@@ -774,9 +785,9 @@ FSBLUP <- function(
   {
     cat("\nStart optimizing Fusion Similarity matrix ..\n")
     opt <- FSBLUP.CrossV(phe_cv = phe_cv, trait_col = trait_col, M1 = M1_cv, M2 = M2_cv, M3 = M3_cv, fixed_eff = fixed_eff,
-                            crv.num = po.crv.num, crv.rep.num = po.crv.rep.num, gs.point_num = po.gs.point_num,
-                            bi.max_iter = po.bi.max_iter, bi.threshold = po.bi.threshold,
-                            stas.type = stas.type, stas.fn = stas.fn, stas.phe.col = stas.phe.col)
+                            crv.num = po.crv.num, crv.rep.num = po.crv.rep.num, gs.point_num = gs_size,
+                            bi.max_iter = bi_max_iter, bi.threshold = bi_threshold,
+                            stas.type = stas.type, stas.fn = stas.fn, stas.phe.col = stas.phe.col, ...)
   } else if((is.null(po.year) | is.null(po.ngen)) & is.null(po.crv.num))
   {
     if(!is.null(po.year))
@@ -800,9 +811,9 @@ FSBLUP <- function(
 
     cat("Start optimize Fusion Similarity matrix \n")
     opt <- FSBLUP.TimeV(phe_cv = phe_cv, trait_col = trait_col, M1 = M1_cv, M2 = M2_cv, M3 = M3_cv, fixed_eff = fixed_eff,
-                           train.id = train.id, test.id = test.id, gs.point_num = po.gs.point_num,
-                           bi.max_iter = po.bi.max_iter, bi.threshold = po.bi.threshold,
-                           stas.type = stas.type, stas.fn = stas.fn, stas.phe.col = stas.phe.col)
+                           train.id = train.id, test.id = test.id, gs.point_num = gs_size,
+                           bi.max_iter = bi_max_iter, bi.threshold = bi_threshold,
+                           stas.type = stas.type, stas.fn = stas.fn, stas.phe.col = stas.phe.col, ...)
   } else {
     stop("\n\n Parameters shouldn't be NULL at same time for: 'po.year', 'po.ngen' and 'po.crv.num' !!! \n\n")
   }
