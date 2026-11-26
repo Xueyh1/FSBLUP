@@ -45,9 +45,12 @@ struct System {
     mat z = v;
     z.each_col() /= diag;
     if (!woodbury.empty())
-      z -= scaled_features * arma::solve(arma::trimatu(woodbury.t()),
-                                         arma::solve(arma::trimatl(woodbury),
-                                                     scaled_features.t() * v));
+      z -= scaled_features *
+           arma::solve(arma::trimatu(woodbury.t()),
+                       arma::solve(arma::trimatl(woodbury),
+                                   scaled_features.t() * v,
+                                   arma::solve_opts::no_approx),
+                       arma::solve_opts::no_approx);
     return z;
   }
   vec apply(const vec &v) {
@@ -89,8 +92,10 @@ struct System {
       return x;
     }
     if (opt.solver == "direct") {
-      x = arma::solve(arma::trimatu(lower.t()),
-                      arma::solve(arma::trimatl(lower), b));
+      x = arma::solve(
+          arma::trimatu(lower.t()),
+          arma::solve(arma::trimatl(lower), b, arma::solve_opts::no_approx),
+          arma::solve_opts::no_approx);
       vec r = b - apply(x);
       require(verify(r), "direct true residual failed rhs=" + rhs);
       success(r, 1);
@@ -156,8 +161,10 @@ struct Projection {
             "ill-conditioned fixed-effect system");
   }
   vec small(const vec &rhs) const {
-    return arma::solve(arma::trimatu(lower.t()),
-                       arma::solve(arma::trimatl(lower), rhs));
+    return arma::solve(
+        arma::trimatu(lower.t()),
+        arma::solve(arma::trimatl(lower), rhs, arma::solve_opts::no_approx),
+        arma::solve_opts::no_approx);
   }
   vec project(const vec &h, vec &b) const {
     b = small(x.t() * h);

@@ -692,7 +692,9 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
     mask.elem(s).zeros();
     uvec u = arma::find(mask);
     mat reg = arma::solve(arma::trimatu(l.t()),
-                          arma::solve(arma::trimatl(l), gcols.rows(u).t()))
+                          arma::solve(arma::trimatl(l), gcols.rows(u).t(),
+                                      arma::solve_opts::no_approx),
+                          arma::solve_opts::no_approx)
                   .t();
     mat t = base;
     if (a != 0) {

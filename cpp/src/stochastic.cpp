@@ -350,8 +350,10 @@ State evaluate(ProbeSet &probes, const mat &x, const vec &y, double g, double e,
       }
       mat kw = probes.k.apply(p.w);
       audit.matvec += p.w.n_cols;
-      mat invwx = arma::solve(arma::trimatl(p.lower), p.w.t()),
-          invkw = arma::solve(arma::trimatl(p.lower), kw.t());
+      mat invwx = arma::solve(arma::trimatl(p.lower), p.w.t(),
+                              arma::solve_opts::no_approx),
+          invkw = arma::solve(arma::trimatl(p.lower), kw.t(),
+                              arma::solve_opts::no_approx);
       rank_correction = {arma::accu(invwx % invkw),
                          arma::accu(arma::square(invwx))};
       probes.quad = quadratic;
@@ -427,7 +429,7 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
                               FitAudit &a) {
   ProbeSet probes(k, o, a);
   size_t count = o.probes, df = x.n_rows - x.n_cols;
-  vec ols = arma::solve(x, y);
+  vec ols = arma::solve(x, y, arma::solve_opts::no_approx);
   double scale = arma::dot(y - x * ols, y - x * ols) / df;
   double km = arma::mean(k.diagonal), floor = scale * 1e-9;
   vec units = {scale / km, scale};
@@ -493,9 +495,11 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
         throw std::runtime_error(
             "stochastic AI unidentifiable or ill-conditioned, rank=" +
             std::to_string(info_rank));
-      delta = arma::solve(cur.information, cur.score);
+      delta =
+          arma::solve(cur.information, cur.score, arma::solve_opts::no_approx);
       if (g > 0 && e > floor) {
-        vec grad = arma::solve(cur.information, vec{-1 / g, 1 / e});
+        vec grad = arma::solve(cur.information, vec{-1 / g, 1 / e},
+                               arma::solve_opts::no_approx);
         a.logratio_se = .5 *
                         arma::stddev(arma::conv_to<vec>::from(
                             (grad.t() * cur.samples).t())) /
@@ -541,7 +545,7 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
       mat L;
       require(arma::chol(L, H),
               "stochastic precision insufficient: log-variance curvature");
-      vec grad = arma::solve(H, vec{-1., 1.});
+      vec grad = arma::solve(H, vec{-1., 1.}, arma::solve_opts::no_approx);
       grad %= vec{g, e};
       a.logratio_se =
           .5 *
