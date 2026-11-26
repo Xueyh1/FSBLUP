@@ -67,6 +67,8 @@ Estimates estimate_exact(const Contrast &c, size_t n, double g, double e,
       if (it == 0 || it % o.record_every == 0 || status != "update") {
         audit.steps.push_back({it, bt, g, e, d.lik, d.score[0], d.score[1],
                                step, condition, status});
+        if (o.varcomp == "ai-reml")
+          audit.steps.back().information_rank = arma::rank(d.information);
       }
       if (o.event && (it % o.log_every == 0 || status != "update"))
         o.event(audit.context + " reml=" + std::to_string(it) +
@@ -118,7 +120,9 @@ Estimates estimate_exact(const Contrast &c, size_t n, double g, double e,
           !arma::solve(delta, ai, s, arma::solve_opts::no_approx)) {
         if (!boundary.empty() && best_face().lik >= d.lik)
           return accept_face();
-        throw std::runtime_error("ai-reml singular average information");
+        record("singular-information", 0, 0, condition);
+        throw std::runtime_error("ai-reml singular average information, rank=" +
+                                 std::to_string(arma::rank(ai)));
       }
       delta %= units;
       // Maximize the local AI quadratic on the feasible quadrant. Reoptimizing

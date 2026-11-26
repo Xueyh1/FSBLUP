@@ -92,6 +92,7 @@ def main():
     p.add_argument("--tag", default="run")
     p.add_argument("--storage", default="auto")
     p.add_argument("--trace-rank", default="0")
+    p.add_argument("--slq-batch", default="1")
     p.add_argument("--reorth", default="local")
     p.add_argument("--slq-depth", default="40")
     p.add_argument("--probe-solver", default="lanczos")
@@ -259,6 +260,8 @@ def main():
                                     opts += [
                                         "--trace-rank",
                                         a.trace_rank,
+                                        "--slq-batch",
+                                        a.slq_batch,
                                         "--slq-reorth",
                                         a.reorth,
                                         "--probe-solver",

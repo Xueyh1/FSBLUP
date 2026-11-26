@@ -24,6 +24,11 @@ struct ProbeSet {
   std::vector<Pair> rules;
   std::optional<Pair> design_rule, response_rule;
   double traceK, tail_mean = 0;
+  std::unique_ptr<System> system;
+  std::unique_ptr<Projection> projection;
+  vec response, quad, rank_term;
+  mat info, solved_samples;
+  double offset_term = 0;
   mat directions;
   vec anchors;
   std::vector<vec> energy_deviation;
@@ -108,6 +113,10 @@ struct ProbeSet {
       prev = std::move(q);
       q = v / b[j];
     }
+    return quadrature(d, b, used, arma::dot(z, z), orthogonal_to != nullptr);
+  }
+  Pair quadrature(const vec &d, const vec &b, size_t used, double norm_squared,
+                  bool contrast) {
     auto rule = [&](size_t m) {
       mat t = arma::diagmat(d.head(m));
       if (m > 1) {
@@ -121,17 +130,63 @@ struct ProbeSet {
       if (r.nodes.min() < -1e-10 * std::max(1., r.nodes.max()))
         throw std::runtime_error(
             "SLQ negative Ritz spectrum min=" + std::to_string(r.nodes.min()) +
-            " max=" + std::to_string(r.nodes.max()) +
-            " depth=" + std::to_string(m) +
-            " contrast=" + std::to_string(orthogonal_to != nullptr));
+            " max=" + std::to_string(r.nodes.max()) + " depth=" +
+            std::to_string(m) + " contrast=" + std::to_string(contrast));
       r.nodes = arma::clamp(r.nodes, 0., arma::datum::inf);
-      r.weights = arma::dot(z, z) * arma::square(v.row(0).t());
+      r.weights = norm_squared * arma::square(v.row(0).t());
       return r;
     };
     return {rule(std::min(used, o.slq_depth)), rule(used)};
   }
+  void build_panel(size_t width) {
+    // Separate scalar Lanczos recurrences share a streamed matmat, not a
+    // block-Krylov space. Deflate each column independently on breakdown.
+    const size_t n = keys.size(), depth = std::min(n, 2 * o.slq_depth);
+    mat q(n, width), prev(n, width, arma::fill::zeros), d(depth, width),
+        b(depth, width);
+    uvec active = arma::regspace<uvec>(0, width - 1), length(width);
+    vec scale(width, arma::fill::ones);
+    for (size_t c = 0; c < width; ++c) {
+      auto z = probe(rules.size() + c);
+      if (!anchors.empty())
+        energy_deviation.push_back(arma::square(directions.t() * z) - 1);
+      q.col(c) = z / std::sqrt(double(n));
+    }
+    for (size_t j = 0; j < depth && !active.empty(); ++j) {
+      mat v = k.apply(q.cols(active));
+      audit.matvec += active.n_elem;
+      audit.slq_matvec += active.n_elem;
+      std::vector<arma::uword> next;
+      for (size_t h = 0; h < active.n_elem; ++h) {
+        auto c = active[h];
+        auto col = v.col(h);
+        if (j)
+          col -= b(j - 1, c) * prev.col(c);
+        d(j, c) = arma::dot(q.col(c), col);
+        col -= d(j, c) * q.col(c);
+        col -= arma::dot(q.col(c), col) * q.col(c);
+        if (j)
+          col -= arma::dot(prev.col(c), col) * prev.col(c);
+        b(j, c) = arma::norm(col);
+        length[c] = j + 1;
+        scale[c] = std::max(scale[c], std::abs(d(j, c)) + b(j, c));
+        if (j + 1 < depth && b(j, c) > std::sqrt(arma::datum::eps) * scale[c]) {
+          prev.col(c) = q.col(c);
+          q.col(c) = col / b(j, c);
+          next.push_back(c);
+        }
+      }
+      active = uvec(next);
+    }
+    for (size_t c = 0; c < width; ++c)
+      rules.push_back(quadrature(d.col(c), b.col(c), length[c], n, false));
+  }
   void ensure(size_t count) {
     while (rules.size() < count) {
+      if (o.slq_batch > 1) {
+        build_panel(std::min(count - rules.size(), o.slq_batch));
+        continue;
+      }
       vec z = probe(rules.size());
       rules.push_back(build(z));
       if (!anchors.empty())
@@ -229,7 +284,7 @@ State evaluate(ProbeSet &probes, const mat &x, const vec &y, double g, double e,
   s.depth = 0;
   double offset = 0;
   vec quadratic(2), rank_correction(2);
-  std::optional<System> sys;
+  System *sys = nullptr;
   if (probes.o.probe_lanczos && !verify && x.n_cols == 1) {
     // The Krylov space of K (or Q2'KQ2) is shift-invariant. Store scalar
     // quadrature measures for this design and response only, never across
@@ -264,11 +319,26 @@ State evaluate(ProbeSet &probes, const mat &x, const vec &y, double g, double e,
       }
     }
   } else {
-    sys.emplace(probes.k, g, e, probes.o, audit);
-    Projection p(*sys, x);
-    vec r = p.fit_response(y, "y").r;
-    offset = 2 * arma::accu(arma::log(p.lower.diag())) + arma::dot(y, r);
-    if (score) {
+    if (!probes.system || probes.system->g != g || probes.system->e != e) {
+      probes.projection.reset();
+      probes.system = std::make_unique<System>(probes.k, g, e, probes.o, audit);
+      probes.projection = std::make_unique<Projection>(*probes.system, x);
+      probes.response = probes.projection->fit_response(y, "y").r;
+      probes.offset_term =
+          2 * arma::accu(arma::log(probes.projection->lower.diag())) +
+          arma::dot(y, probes.response);
+      probes.quad.reset();
+      probes.solved_samples.reset();
+    }
+    sys = probes.system.get();
+    auto &p = *probes.projection;
+    const vec &r = probes.response;
+    offset = probes.offset_term;
+    if (score && !probes.quad.empty()) {
+      quadratic = probes.quad;
+      rank_correction = probes.rank_term;
+      s.information = probes.info;
+    } else if (score) {
       vec kr = probes.k.apply(r);
       ++audit.matvec;
       mat dr = arma::join_rows(kr, r);
@@ -284,6 +354,9 @@ State evaluate(ProbeSet &probes, const mat &x, const vec &y, double g, double e,
           invkw = arma::solve(arma::trimatl(p.lower), kw.t());
       rank_correction = {arma::accu(invwx % invkw),
                          arma::accu(arma::square(invwx))};
+      probes.quad = quadratic;
+      probes.rank_term = rank_correction;
+      probes.info = s.information;
     }
   }
   mat controls = probes.controls(g, e, count);
@@ -315,8 +388,11 @@ State evaluate(ProbeSet &probes, const mat &x, const vec &y, double g, double e,
       s.samples(1, j) =
           arma::dot(q.weights, inv) - rank_correction[1] - controls(2, j);
     }
-  } else
-    for (size_t i = 0; i < count; i += probes.o.batch) {
+  } else {
+    size_t saved = std::min(count, size_t(probes.solved_samples.n_cols));
+    if (saved)
+      s.samples.head_cols(saved) = probes.solved_samples.head_cols(saved);
+    for (size_t i = saved; i < count; i += probes.o.batch) {
       size_t width = std::min(count - i, probes.o.batch);
       mat z(x.n_rows, width);
       for (size_t j = 0; j < width; ++j)
@@ -333,6 +409,8 @@ State evaluate(ProbeSet &probes, const mat &x, const vec &y, double g, double e,
                               rank_correction[1] - controls(2, i + j);
       }
     }
+    probes.solved_samples = s.samples;
+  }
   vec traces = arma::mean(s.samples, 1);
   audit.trace_identity_error =
       std::abs(g * traces[0] + e * traces[1] - (x.n_rows - x.n_cols));
@@ -377,13 +455,16 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
     if (o.event && it % o.log_every == 0)
       o.event(a.context + " reml=" + std::to_string(it) +
               " probes=" + std::to_string(count));
+    int info_rank =
+        o.varcomp == "ai-reml" ? int(arma::rank(cur.information)) : -1;
     bool boundary_g = g == 0, boundary_e = e <= floor;
     vec se = .5 * vec{a.trace_se_g, a.trace_se_e} % units / df / 1.;
     if (zero_score * units[0] / df < -o.score_tol && cur.score[0] < 0 &&
         zero_lik >=
             lik + 1.96 * arma::stddev(cur.lik) / std::sqrt(double(count))) {
       a.steps.push_back({it, 0, g, e, lik, cur.score[0], cur.score[1], 0, 0,
-                         "active-set", count, a.paired_se, cur.depth});
+                         "active-set", count, a.paired_se, cur.depth,
+                         info_rank});
       a.steps.push_back({it + 1, 0, 0, scale, zero_lik, zero_score, 0, 0, 0,
                          "genetic-zero", count, 0, 0});
       return {0, scale, zero_lik, "genetic-zero"};
@@ -397,7 +478,8 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
     }
     auto more = [&] {
       a.steps.push_back({it, 0, g, e, lik, cur.score[0], cur.score[1], 0, 0,
-                         "increase-probes", count, a.paired_se, cur.depth});
+                         "increase-probes", count, a.paired_se, cur.depth,
+                         info_rank});
       require(count < o.max_probes,
               "stochastic precision insufficient: probe budget exhausted");
       count = std::min(2 * count, o.max_probes);
@@ -407,8 +489,10 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
     vec delta;
     if (o.varcomp == "ai-reml") {
       condition = arma::rcond(cur.information);
-      require(condition > 1e-14,
-              "stochastic AI unidentifiable or ill-conditioned");
+      if (condition <= 1e-14)
+        throw std::runtime_error(
+            "stochastic AI unidentifiable or ill-conditioned, rank=" +
+            std::to_string(info_rank));
       delta = arma::solve(cur.information, cur.score);
       if (g > 0 && e > floor) {
         vec grad = arma::solve(cur.information, vec{-1 / g, 1 / e});
@@ -481,7 +565,8 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
                       : boundary_e ? "approx-residual-floor"
                                    : "approx-interior";
       a.steps.push_back({it, 0, g, e, lik, cur.score[0], cur.score[1], 0,
-                         condition, status, count, a.paired_se, cur.depth});
+                         condition, status, count, a.paired_se, cur.depth,
+                         info_rank});
       return {g, e, lik, status};
     }
     require(it < o.max_reml, "stochastic REML iteration-limit");
@@ -511,7 +596,7 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
           a.steps.push_back({it, bt, g, e, lik, cur.score[0], cur.score[1],
                              step, condition,
                              bt ? "approx-damped-update" : "approx-update",
-                             count, a.paired_se, cur.depth});
+                             count, a.paired_se, cur.depth, info_rank});
         g = ng;
         e = ne;
         ++it;

@@ -67,13 +67,17 @@ FitOptions fit_options(const Options &opt, Timing &tm) {
     o.seed = integer(opt.get("probe-seed", "42"), 0);
     o.slq_depth = integer(opt.get("slq-depth", "12"), 2);
     o.batch = integer(opt.get("probe-batch", "8"), 1);
+    o.slq_batch = integer(opt.get("slq-batch", "1"), 1);
+    require(
+        o.slq_batch <= o.batch && (!o.full_reorth || o.slq_batch == 1),
+        "--slq-batch must fit probe batch; panels require --slq-reorth local");
     o.mc_tol = number(opt.get("mc-tol", ".025"));
     o.slq_tol = number(opt.get("slq-tol", "1e-5"));
     require(o.mc_tol > 0 && o.slq_tol > 0, "invalid stochastic tolerances");
   } else
-    for (auto key :
-         {"trace-rank", "slq-reorth", "probe-solver", "probes", "max-probes",
-          "probe-seed", "slq-depth", "probe-batch", "mc-tol", "slq-tol"})
+    for (auto key : {"slq-batch", "trace-rank", "slq-reorth", "probe-solver",
+                     "probes", "max-probes", "probe-seed", "slq-depth",
+                     "probe-batch", "mc-tol", "slq-tol"})
       require(!opt.has(key), string("--") + key + " requires hutchinson");
   if (opt.has("max-backtracks"))
     require(o.varcomp == "ai-reml" || o.trace == "hutchinson",
@@ -132,7 +136,7 @@ void write_audits(const fs::path &dir, const std::vector<FitAudit> &audits,
   write_file(dir / (prefix + "reml_trace.tsv"), [&](std::ostream &f) {
     f << "context\testimator\ttrace\titeration\tVu\tVe\tcontrast_loglik\tscore_"
          "g\tscore_e\tstep\tbacktracks\tAI_rcond\tprobes\tpaired_se\tdepth_"
-         "error_per_n\tstatus\n";
+         "error_per_n\tAI_rank\tstatus\n";
     for (auto &a : audits)
       for (auto &r : a.steps)
         f << a.context << '\t' << o.varcomp << '\t' << o.trace << '\t'
@@ -143,7 +147,10 @@ void write_audits(const fs::path &dir, const std::vector<FitAudit> &audits,
           << '\t' << std::scalbn(r.sg, -2 * a.scale_exponent) << '\t'
           << std::scalbn(r.se, -2 * a.scale_exponent) << '\t' << r.step << '\t'
           << r.backtracks << '\t' << r.condition << '\t' << r.probes << '\t'
-          << r.paired_se << '\t' << r.depth_error << '\t' << r.status << '\n';
+          << r.paired_se << '\t' << r.depth_error << '\t'
+          << (r.information_rank < 0 ? "NA"
+                                     : std::to_string(r.information_rank))
+          << '\t' << r.status << '\n';
   });
 }
 const char *policy_name(PdPolicy policy) {

@@ -88,6 +88,35 @@ with tempfile.TemporaryDirectory() as tmp:
         assert (
             float(audit["trace_identity_error"]) < 1e-7 and int(audit["probes"]) >= 16
         )
+    panel = run(
+        "panel",
+        fixed
+        + [
+            "--probe-solver",
+            "lanczos",
+            "--probe-seed",
+            "19",
+            "--trace-rank",
+            "4",
+            "--probes",
+            "16",
+            "--max-probes",
+            "4096",
+            "--mc-tol",
+            ".025",
+            "--slq-reorth",
+            "local",
+            "--slq-batch",
+            "4",
+        ],
+    )
+    assert (
+        abs(
+            float(rows(panel / "model.tsv")[0]["lambda"])
+            - float(rows(root / "lanczos" / "model.tsv")[0]["lambda"])
+        )
+        < 1e-5
+    )
     m0 = rows(root / "pcg" / "model.tsv")[0]
     m1 = rows(root / "lanczos" / "model.tsv")[0]
     assert abs(float(m0["lambda"]) - float(m1["lambda"])) < 1e-5

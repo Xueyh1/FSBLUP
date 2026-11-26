@@ -13,7 +13,8 @@ struct FitOptions {
          initial_g = 0, initial_e = 0;
   int rank = 16, trace_rank = 0, record_every = 10;
   int max_pcg = 2000, max_reml = 200, log_every = 10, max_backtracks = 54;
-  size_t probes = 16, max_probes = 256, slq_depth = 12, batch = 8;
+  size_t probes = 16, max_probes = 256, slq_depth = 12, batch = 8,
+         slq_batch = 1;
   bool full_reorth = true, probe_lanczos = false, trace_rhs = false;
   double memory_mb = 8192;
   unsigned seed = 42;
@@ -27,6 +28,7 @@ struct Iteration {
   std::string status;
   size_t probes = 0;
   double paired_se = 0, depth_error = 0;
+  int information_rank = -1;
 };
 struct FitAudit {
   std::string context, status;
