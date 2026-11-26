@@ -96,6 +96,7 @@ Evaluation evaluate_weight(FusionPlan &plan, double a, double b, const mat &x,
   e.scores.resize(folds.size(), NAN);
   string location;
   try {
+    require(!folds.empty(), "no validation folds");
     auto k = plan.combine(a, b, nullptr, policy, PdDiagnostics::tuning);
     e.correction = k.correction;
     for (const auto &block : k.pd_blocks) {
@@ -113,11 +114,13 @@ Evaluation evaluate_weight(FusionPlan &plan, double a, double b, const mat &x,
                  std::to_string(f.fold) + ": ";
       auto fit = solve(k.k, x, y, f.train);
       e.scores[j] = score(truth.elem(f.valid), fit.u.elem(f.valid), metric);
+      require(std::isfinite(e.scores[j]), "nonfinite validation score");
       sum += e.scores[j];
       ++count;
     }
     require(count > 0, "no scorable fold: " + folds.front().reason);
     e.value = sum / count;
+    require(std::isfinite(e.value), "nonfinite mean validation score");
   } catch (const std::runtime_error &ex) {
     e.reason = location + ex.what();
   }

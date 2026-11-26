@@ -1,6 +1,8 @@
 #include "core.hpp"
+#include <charconv>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <unordered_map>
 namespace fsb {
 void require(bool ok, const string &message) {
@@ -137,12 +139,19 @@ Table read_table(const fs::path &p) {
   require(!t.rows.empty(), "empty table: " + p.string());
   return t;
 }
-std::ofstream output(const fs::path &p) {
-  std::ofstream f;
-  f.exceptions(std::ios::failbit | std::ios::badbit);
-  f.open(p);
-  f << std::setprecision(17);
-  return f;
+void write_file(const fs::path &path,
+                const std::function<void(std::ostream &)> &write) {
+  try {
+    std::ofstream stream;
+    stream.exceptions(std::ios::failbit | std::ios::badbit);
+    stream.open(path);
+    stream << std::setprecision(17);
+    write(stream);
+    // A disk error can first appear while closing the last buffered block.
+    stream.close();
+  } catch (const std::ios_base::failure &error) {
+    throw std::runtime_error("cannot write " + path.string() + ": " + error.what());
+  }
 }
 double budget(size_t n, size_t m, double cap) {
   double estimate = (20. * n * n * 8 + 64. * n * m) / 1048576.;
@@ -216,16 +225,29 @@ string field(const string &s) {
   return out + '\"';
 }
 void write_matrix(const fs::path &p, const Ids &ids, const mat &k) {
-  auto f = output(p);
-  f << "ID";
-  for (auto &id : ids)
-    f << '\t' << field(id);
-  f << '\n';
-  for (size_t i = 0; i < ids.size(); ++i) {
-    f << field(ids[i]);
-    for (double v : k.row(i))
-      f << '\t' << v;
+  write_file(p, [&](std::ostream &f) {
+    f << "ID";
+    for (const auto &id : ids)
+      f << '\t' << field(id);
     f << '\n';
-  }
+    // Format one row at a time, then reuse its capacity for the next row.
+    string row;
+    char number[64];
+    for (size_t i = 0; i < ids.size(); ++i) {
+      row.clear();
+      row += field(ids[i]);
+      for (size_t j = 0; j < ids.size(); ++j) {
+        row.push_back('\t');
+        const auto result = std::to_chars(number, number + sizeof(number), k(i, j),
+                                          std::chars_format::general,
+                                          std::numeric_limits<double>::max_digits10);
+        if (result.ec != std::errc{})
+          throw std::runtime_error("cannot format matrix value for " + p.string());
+        row.append(number, result.ptr);
+      }
+      row.push_back('\n');
+      f.write(row.data(), static_cast<std::streamsize>(row.size()));
+    }
+  });
 }
 } // namespace fsb

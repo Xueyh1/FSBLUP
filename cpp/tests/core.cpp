@@ -123,6 +123,10 @@ int main(int argc, char **argv) {
     auto folds = split({{1, {1, 1, 2, 2}}}, false, {0, 0, 0, 1}, "auc");
     require(!folds[0].reason.empty() && folds[1].reason.empty(),
             "undefined fold policy");
+    FusionPlan plan(l);
+    require(evaluate_weight(plan, .2, .5, x, y, y, {}, "rmse").reason ==
+                "no validation folds",
+            "empty folds should produce an ineligible candidate");
     auto search_result = search(false, true, [](double a, double b) {
       Evaluation e;
       e.value = (a - .375) * (a - .375) + (b - .375) * (b - .375);

@@ -1,4 +1,5 @@
 #include "core.hpp"
+#include <cmath>
 namespace fsb {
 namespace {
 // Apply the p QR reflectors to K and y.  Once the leading coordinate of a
@@ -55,6 +56,15 @@ Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
           "training design rank deficient or no residual degrees of freedom");
   require(yt.is_finite() && x.is_finite(),
           "nonfinite training phenotype or design");
+  // Bound the magnitude before subtracting an intercept or squaring REML
+  // contrasts. Power-of-two scaling preserves binary significands and lets
+  // us restore variance units even when the square of the scale overflows.
+  int exponent = 0;
+  std::frexp(arma::abs(yt).max(), &exponent);
+  if (exponent < -256 || exponent > 256)
+    yt.transform([exponent](double v) { return std::scalbn(v, -exponent); });
+  else
+    exponent = 0;
   // Translate the response when the first design column is an intercept.
   // Contrasts and genomic predictions are invariant to this translation.
   const double offset = arma::all(x.col(0) == 1.) ? yt(0) : 0.;
@@ -64,12 +74,13 @@ Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
   residual_spectrum(kt, xt, yt, eigen, z);
   require(arma::norm(z) > 64 * arma::datum::eps * arma::norm(yt),
           "constant response or exact fixed-effect fit");
+  const vec z_squared = arma::square(z);
   auto profile = [&](double log_lambda) {
     // Factor out the largest denominator. The profile is invariant to this
     // scale.
     vec d = eigen + std::exp(log_lambda);
     d /= d.max();
-    return (n - p) * std::log(arma::mean(arma::square(z) / d)) +
+    return (n - p) * std::log(arma::mean(z_squared / d)) +
            arma::accu(arma::log(d));
   };
   const double lo = std::log(1e-9), hi = std::log(1e9);
@@ -114,7 +125,13 @@ Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
                           : "interior";
   }
   double lambda = std::exp(best);
-  double vu = arma::mean(arma::square(z) / (eigen + lambda));
+  const double scaled_vu = arma::mean(z_squared / (eigen + lambda));
+  const double vu = std::scalbn(scaled_vu, 2 * exponent);
+  const double ve = std::scalbn(lambda * scaled_vu, 2 * exponent);
+  require(vu > 0. && ve > 0. && std::isfinite(vu) && std::isfinite(ve),
+          "variance components outside the representable range in phenotype units");
+  const double objective = profile(best) + 2. * (n - p) * exponent * std::log(2.);
+  require(std::isfinite(objective), "nonfinite REML profile objective");
   kt.diag() += lambda;
   mat lower;
   require(arma::chol(lower, kt, "lower"),
@@ -126,6 +143,14 @@ Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
   vec u = k.cols(train) * residual;
   vec yhat = x * b + u + offset;
   b(0) += offset;
-  return {b, u, yhat, lambda, vu, lambda * vu, profile(best), status};
+  if (exponent != 0) {
+    auto restore_units = [exponent](double v) { return std::scalbn(v, exponent); };
+    b.transform(restore_units);
+    u.transform(restore_units);
+    yhat.transform(restore_units);
+  }
+  require(b.is_finite() && u.is_finite() && yhat.is_finite(),
+          "nonfinite coefficients or predictions in phenotype units");
+  return {b, u, yhat, lambda, vu, ve, objective, status};
 }
 } // namespace fsb

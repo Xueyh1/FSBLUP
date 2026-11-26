@@ -57,17 +57,19 @@ struct Timing {
     last = now;
   }
   void save(const fs::path &dir) {
-    auto f = output(dir / "timing.tsv");
-    f << "stage\tseconds\n";
-    for (auto &[s, t] : times)
-      f << s << '\t' << t << '\n';
+    write_file(dir / "timing.tsv", [&](std::ostream &f) {
+      f << "stage\tseconds\n";
+      for (auto &[s, t] : times)
+        f << s << '\t' << t << '\n';
+    });
     struct rusage usage{};
     getrusage(RUSAGE_SELF, &usage);
-    auto g = output(dir / "runtime.tsv");
-    g << "blas\tthreads\tpeak_rss_kib\twall_seconds\n"
-      << openblas_get_config() << '\t' << openblas_get_num_threads() << '\t'
-      << usage.ru_maxrss << '\t'
-      << std::chrono::duration<double>(Clock::now() - start).count() << '\n';
+    write_file(dir / "runtime.tsv", [&](std::ostream &g) {
+      g << "blas\tthreads\tpeak_rss_kib\twall_seconds\n"
+        << openblas_get_config() << '\t' << openblas_get_num_threads() << '\t'
+        << usage.ru_maxrss << '\t'
+        << std::chrono::duration<double>(Clock::now() - start).count() << '\n';
+    });
   }
 };
 struct TuningFailure : std::runtime_error {

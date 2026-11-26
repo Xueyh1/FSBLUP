@@ -55,7 +55,9 @@ int main(int argc, char **argv) {
     try {
       run(cmd, opt, dest.work, cap, tm);
     } catch (const TuningFailure &e) {
-      output(dest.work / "failure.txt") << e.what() << '\n';
+      write_file(dest.work / "failure.txt", [&](std::ostream &f) {
+        f << e.what() << '\n';
+      });
       tm.mark("failed_search");
       tm.save(dest.work);
       dest.publish();

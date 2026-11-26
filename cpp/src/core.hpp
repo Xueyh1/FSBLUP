@@ -2,6 +2,7 @@
 #include <armadillo>
 #include <filesystem>
 #include <functional>
+#include <iosfwd>
 #include <map>
 #include <optional>
 #include <set>
@@ -28,7 +29,7 @@ struct Table {
   Ids column(const string &) const;
 };
 Table read_table(const fs::path &);
-std::ofstream output(const fs::path &);
+void write_file(const fs::path &, const std::function<void(std::ostream &)> &);
 struct Kernel {
   Ids ids;
   mat values;
