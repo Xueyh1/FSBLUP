@@ -82,6 +82,7 @@ def check_fit(directory, matrix, y):
 
 def run(binary, root):
     def invoke(command, name, args, error=None):
+        if command=="fit": args=[*args,"--solver","direct","--varcomp","profile-reml"]
         target = root / name
         proc = subprocess.run([str(binary), command, "--out", str(target),
                                *map(str, args)], text=True, capture_output=True)

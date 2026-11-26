@@ -1,7 +1,6 @@
 #include "core.hpp"
 #include <cmath>
 namespace fsb {
-namespace {
 // Apply the p QR reflectors to K and y.  Once the leading coordinate of a
 // reflector has been eliminated, only the trailing covariance block is used.
 void residual_spectrum(const mat &kernel, const mat &design, const vec &phenotype,
@@ -44,7 +43,6 @@ void residual_spectrum(const mat &kernel, const mat &design, const vec &phenotyp
           "REML decomposition failed");
   z = basis.t() * y.tail(n - p);
 }
-} // namespace
 Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
             double fixed) {
   require(k.n_rows == k.n_cols && k.n_rows == x.n_rows && y.n_elem == k.n_rows,

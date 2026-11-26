@@ -1,5 +1,6 @@
 #pragma once
 #include "near_pd.hpp"
+#include "model.hpp"
 #include <armadillo>
 #include <filesystem>
 #include <functional>
@@ -108,6 +109,9 @@ struct Model {
 };
 Model solve(const mat &, const mat &, const vec &, const uvec &,
             double fixed_lambda = 0);
+void residual_spectrum(const mat&,const mat&,const vec&,vec&,vec&);
+Model fit_model(const mat&,const mat&,const vec&,const uvec&,const FitOptions&,FitAudit&);
+Model fit_operator(const TrainKernel&,const mat& xt,const mat& x,const vec& yt,const FitOptions&,FitAudit&);
 struct Fold {
   int repeat, fold;
   uvec train, valid;
@@ -122,6 +126,7 @@ struct Evaluation {
   double value = NAN;
   string reason, correction;
   std::vector<double> scores;
+  std::vector<FitAudit> fits;
   double fold_seconds = 0;
   PdTimes timing;
   size_t nearpd_blocks = 0;
@@ -130,7 +135,7 @@ struct Evaluation {
 Evaluation evaluate_weight(const FusionPlan &plan, double a, double b,
                            const mat &x, const vec &y, const vec &truth,
                            const std::vector<Fold> &folds, const string &metric,
-                           PdPolicy policy = PdPolicy::strict);
+                           PdPolicy policy = PdPolicy::strict,const FitOptions* options=nullptr);
 struct Trial {
   string stage;
   double alpha, beta;

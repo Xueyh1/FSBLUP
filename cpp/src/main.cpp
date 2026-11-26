@@ -3,12 +3,17 @@
 using namespace fsb;
 namespace {
 const char *help = R"(fsblup 0.3.0
+  prepare --ped PED --snp SNP --omics OMICS [--omics-type generic|fpkm] --out CACHE
+  fit --cache CACHE --pheno TABLE --trait TRAIT [fit options] --out DIR
   build --ped PED --snp SNP --omics OMICS [--omics-type generic|fpkm] --out DIR
   fuse --A A --G G --O O --alpha AWT --beta BWT --out DIR
   fit --pheno TABLE --id ID --trait TRAIT --A A --G G --O O --out DIR
       [--alpha AWT --beta BWT | --folds N --repeats N --seed N | --folds-file FILE
        | --year CUTOFF | --ngen CUTOFF] [--metric cor|rmse|auc] [--score-col COL]
       [--covar COL,...] [--factor COL,...] [--parallel blas|weights] [--strict-simplex] [--write-k]
+  fit: --solver pcg|direct --varcomp ai-reml|em-reml|profile-reml|fixed
+       --trace exact --lambda L --preconditioner jacobi|identity --pcg-rtol R --pcg-atol A
+       --pcg-maxiter N --reml-maxiter N --reml-tol T --init-vu G --init-ve E
   Logging: --log-level off|error|warn|info|debug|trace --log-file FILE --log-every N
   All commands accept --threads N (default 1) and --memory-mb N (dense estimate).
   fuse and fit accept --pd-policy strict|nearPD (default strict).

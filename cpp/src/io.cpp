@@ -123,6 +123,9 @@ struct Reader {
   }
 };
 } // namespace
+void scan_table(const fs::path& path,const std::function<void(const Ids&)>& header,const std::function<void(const Ids&)>& visit){
+ Reader reader(path);header(reader.header);Ids row;while(reader.next(row))visit(row);
+}
 size_t Table::col(const string &name) const {
   auto i = std::find(header.begin(), header.end(), name);
   require(i != header.end(), "unknown column: " + name);

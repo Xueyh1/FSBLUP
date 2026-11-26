@@ -36,6 +36,7 @@ def run(binary, root):
     base = [binary, "fit", "--A", data / "A.tsv", "--G", data / "G.tsv",
             "--O", data / "O.tsv", "--trait", "trait", "--covar", "age",
             "--factor", "herd"]
+    base += ["--solver","direct","--varcomp","profile-reml"]
     fixed = ["--alpha", ".2", "--beta", ".5"]
     for exponent, offset in ((0, 0), (500, 11), (-500, 11)):
         pheno = write_pheno(root, rows, exponent, offset)

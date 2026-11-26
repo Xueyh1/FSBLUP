@@ -44,6 +44,7 @@ def matrix(path, name):
 
 def run(tmp):
     def cli(cmd, dest, args, failure=""):
+        if cmd=="fit": args=[*args,"--solver","direct","--varcomp","profile-reml"]
         target = tmp / dest
         p = subprocess.run([BIN, cmd, "--out", target, *map(str, args)],
                            text=True, capture_output=True)

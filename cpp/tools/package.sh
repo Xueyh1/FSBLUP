@@ -16,13 +16,14 @@ test "$(getconf GNU_LIBC_VERSION)" = 'glibc 2.34'
 ldd "$root/bin/fsblup" > "$stage/linked"
 while read -r lib arrow path rest; do
   case "$lib" in
-    libopenblas*.so.*|libstdc++.so.*|libgcc_s.so.*|libgfortran.so.*|libquadmath.so.*)
+    libopenblas*.so.*|libstdc++.so.*|libgcc_s.so.*|libgfortran.so.*|libquadmath.so.*|libcrypto.so.*)
       test "$arrow" = '=>'
       cp -L "$path" "$root/lib/$lib"
       ;;
   esac
 done < "$stage/linked"
 cp ../LICENSE.md "$root/LICENSE.md"
+cp /usr/share/licenses/openssl-libs/LICENSE.txt "$root/licenses/OpenSSL.txt"
 cp /usr/share/licenses/openblas/LICENSE "$root/licenses/OpenBLAS"
 cp /usr/share/licenses/libgcc/COPYING* /usr/share/licenses/libquadmath/COPYING* "$root/licenses/"
 cp licenses/spdlog.txt licenses/Armadillo.txt "$root/licenses/"

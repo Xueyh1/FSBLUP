@@ -93,7 +93,7 @@ double score(const vec &truth, const vec &pred, const string &metric) {
 Evaluation evaluate_weight(const FusionPlan &plan, double a, double b,
                            const mat &x, const vec &y, const vec &truth,
                            const std::vector<Fold> &folds, const string &metric,
-                           PdPolicy policy) {
+                           PdPolicy policy, const FitOptions* options) {
   Evaluation e;
   e.scores.resize(folds.size(), NAN);
   string location;
@@ -116,7 +116,12 @@ Evaluation evaluate_weight(const FusionPlan &plan, double a, double b,
       location = "repeat " + std::to_string(f.repeat) + " fold " +
                  std::to_string(f.fold) + ": ";
       auto tick = std::chrono::steady_clock::now();
-      auto fit = solve(k.k, x, y, f.train);
+      Model fit;
+      if(options){
+        auto &audit=e.fits.emplace_back();
+        audit.context="alpha="+std::to_string(a)+" beta="+std::to_string(b)+" repeat="+std::to_string(f.repeat)+" fold="+std::to_string(f.fold);
+        fit=fit_model(k.k,x,y,f.train,*options,audit);
+      }else fit=solve(k.k,x,y,f.train);
       e.scores[j] = score(truth.elem(f.valid), fit.u.elem(f.valid), metric);
       e.fold_seconds +=
           std::chrono::duration<double>(std::chrono::steady_clock::now() - tick)
@@ -130,6 +135,7 @@ Evaluation evaluate_weight(const FusionPlan &plan, double a, double b,
     require(std::isfinite(e.value), "nonfinite mean validation score");
   } catch (const std::runtime_error &ex) {
     e.reason = location + ex.what();
+    if(!e.fits.empty())e.fits.back().status=e.reason;
   }
   return e;
 }

@@ -20,14 +20,14 @@ struct Options {
   string get(string k, string def) const { return has(k) ? v.at(k) : def; }
   Options(int argc, char **argv, string cmd) {
     std::set<string> allowed = {"out", "threads", "memory-mb","log-file","log-level","log-every"};
-    if (cmd == "build")
+    if (cmd == "build" || cmd=="prepare")
       allowed.insert({"ped", "snp", "omics", "omics-type"});
     else {
       allowed.insert({"A", "G", "O", "alpha", "beta", "pd-policy"});
       if (cmd == "fit")
-        allowed.insert({"pheno", "id", "trait", "folds", "repeats", "seed",
+        allowed.insert({"cache","pheno", "id", "trait", "folds", "repeats", "seed",
                         "folds-file", "year", "ngen", "metric", "score-col",
-                        "parallel", "covar", "factor", "strict-simplex",
+                        "solver","varcomp","trace","lambda","pcg-rtol","pcg-atol","pcg-maxiter","preconditioner","reml-maxiter","reml-tol","init-vu","init-ve","parallel", "covar", "factor", "strict-simplex",
                         "write-k"});
       else
         require(cmd == "fuse", "unknown subcommand: " + cmd);
