@@ -27,6 +27,7 @@ record("custom_tolerances", a, corr = TRUE, posd.tol = 1e-5, conv.tol = 1e-9,
        eig.tol = 1e-7)
 record("rank_one", tcrossprod(c(1, 2, -.5)))
 record("spectral_cutoff", diag(c(2, 3e-6, 1e-6)))
+record("repeated_cutoff", diag(c(4,4,4e-6,4e-6*(1+1e-10),-1)))
 record("asymmetric", matrix(c(1, 2.2, 2.0, 1), 2, 2, byrow = TRUE))
 record("scalar", matrix(2.5, 1, 1))
 record("scale", 2.5e5 * a)

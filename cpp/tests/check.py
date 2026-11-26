@@ -151,6 +151,9 @@ def run(tmp):
     args = layers(base=fallback) + ["--trait", "trait", "--pheno", ph_file,
                                     "--year", 2020, "--metric", "rmse"]
     out = cli("fit", "full_fallback", args)
+    threaded = cli("fit", "threaded_full_fallback", args + ["--parallel","weights","--threads",4])
+    for file in ("search.tsv","predictions.tsv","tuning.tsv"):
+        assert (out/file).read_bytes()==(threaded/file).read_bytes()
     trials = read(out / "search.tsv")
     winner, = [r for r in trials if r["reference_best"] == "1"]
     assert winner["full_status"] == "rejected" and "indefinite" in winner["full_reason"]

@@ -199,6 +199,10 @@ def run(binary, root):
     singular = save_kernel(root / "singular_A.tsv", IDS, m)
     g = save_kernel(root / "G.tsv", IDS[:4], identity(4))
     invoke("fuse", "C_singular", layers(singular, g, o) + weights + repair, "conditioning block")
+    m = identity(len(IDS))
+    m[2][3] = m[3][2] = 1.
+    singular22 = save_kernel(root / "singular22.tsv", IDS, m)
+    invoke("fuse", "C_singular22", layers(singular22, g, o) + weights + repair, "A22")
     print("nearPD CLI: analytic matrix, jitter, fixed fit, 15 tuning grid points, B and C blocks passed")
 
 

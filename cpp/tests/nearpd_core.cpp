@@ -75,7 +75,7 @@ int main(int argc, char **argv) {
         check_case(line);
         ++count;
       }
-    check(count == 12, "incomplete fixture case count");
+    check(count == 13, "incomplete fixture case count");
     check(rejects(arma::zeros<arma::mat>(2, 2)), "zero spectrum");
     check(rejects(-arma::eye<arma::mat>(3, 3)), "negative-definite input");
     check(rejects(arma::mat()), "empty input");
