@@ -1,10 +1,10 @@
-# fsblup 0.1.0
+# fsblup 0.2.0
 
 Linux 命令行工具，用于单性状、每个个体一条表型记录的融合核 BLUP。将候选个体保留在表型文件里，性状填 `NA`。在 `predictions.tsv` 中按 `role=candidate` 取其带 ID 的 `u` 和 `yhat`。未列入表型文件的系谱祖先可以参与构核。
 
 ## 直接运行
 
-发布包适用于 x86_64 Linux、glibc 2.34 及以上。解包后保留 `bin/` 和 `lib/` 的相对位置。程序、预测与调参均可在无 R 环境运行。以下命令在解包目录执行，输出目录使用新名字。源码树中可分别设置 `exe=build/fsblup` 和 `d=tests/data`。
+发布包适用于 x86_64 Linux、glibc 2.34 及以上。解包后保留 `bin/` 和 `lib/` 的相对位置。程序、预测与调参均可在无 R 环境运行。0.2.0 已在 CentOS Stream 9（glibc 2.34）打包，并在无 R 的 Ubuntu 22.04.5（glibc 2.35）隔离根文件系统中实际触发并验证 nearPD。以下命令在解包目录执行，输出目录使用新名字。源码树中可分别设置 `exe=build/fsblup` 和 `d=tests/data`。
 
 ```bash
 exe=bin/fsblup
@@ -36,10 +36,25 @@ awk -F '\t' 'NR==1 || $2=="candidate"' selected/predictions.tsv
 - `fit` 默认含截距，`--covar age,weight` 指定数值列，`--factor herd,sex` 指定分类列。每个分类变量以字符串排序的第一水平为参照，写入 `reference_levels.tsv`。每次训练检查设计秩。候选个体也需提供固定效应值。
 - `--alpha` 与 `--beta` 成对指定会跳过搜索。自动选择有三种方式：默认均衡随机折 `--folds 5 --repeats 2 --seed 42`、`--folds-file FILE`、`--year 2021` 或 `--ngen 3`。时间验证读取同名数值列，参考个体中小于等于截断值的用于训练，其余用于调参评分。随机参数、外部折表、时间截断互斥。`folds.tsv` 包含 repeat、fold、id，每次重复每个参考 ID 恰好一次。普通折从 1 连续编号；时间折中 0 表示训练，1 表示验证，可原样回读。
 - 训练性状为 `--trait`，评分默认比较验证个体的 `u` 与该性状，可用 `--score-col` 指定另一个评分列。有表型个体的评分列须完整。Pearson 与二分类 AUC 取最大值，RMSE 取最小值。AUC 标签必须为 0/1，并列预测计半分；`u` 是随机效应预测量。调参分数使用相同可评分折的等权平均。`fold_counts.tsv` 解释仅由真值导致的不可评分折；预测恒定、求解失败等候选特有错误令整个候选失格。
-- 调参先限制三层源矩阵到参考 ID，再融合。选定权重后在完整 ID 集合重新融合并用全部有表型个体重拟合。覆盖在参考集中退化时可指定固定权重。独立评估请将留出个体的拟合性状填为 NA，并在预测后单独评分。预构核可含所有样本的无监督特征统计量。
+- 调参先限制三层源矩阵到参考 ID，再融合。对所有已有参考群评分的合格权重按评分顺序检查全群融合，取第一个能构造有效协方差的权重，再用全部有表型个体重拟合。全群可行性检查只读取核。`search.tsv` 写入各点的参考群评分和全群检查状态，`tuning.tsv` 同时给出参考群最优、最终权重及两者的评分。覆盖在参考集中退化时可指定固定权重。独立评估请将留出个体的拟合性状填为 NA，并在预测后单独评分。预构核可含所有样本的无监督特征统计量。
 - `--threads N` 设置 OpenBLAS 并行，权重与折串行；默认 1。Slurm 上可用 `srun -n1 -c4 --mem=8G ... --threads 4`。`--memory-mb` 以 MiB 为单位，默认 8192，按 `(160 n² + 64 nm)/2²⁰` 估算密集工作集，n 为样本数，m 为输入特征数。估算与进程实际 RSS 分别写入 `memory.tsv` 和 `runtime.tsv`。Slurm 内存限额仍适用于整个进程。
 - `fusion.tsv` 记录覆盖、权重和扰动。`fuse` 或 `fit --write-k` 输出完整 `K_raw.tsv`、`K.tsv` 和 ID。模型文件含 Vu、Ve、lambda、边界状态；`fixed.tsv` 含各固定效应。搜索输出 `search.tsv` 与 `tuning.tsv`。若所有网格点失格，检查保留的搜索轨迹和 `failure.txt`。运行结果以目录为单位发布。
 - 支持 A/G/O 同集合、A=G 且 O 为真子集，以及 O 严格包含于 G、G 严格包含于 A 的嵌套覆盖。其它情形会给出分组数量和示例 ID。输入约定、分块公式和实测边界见 [数值验收记录](VALIDATION.md)。
+
+## 融合矩阵的正定性
+
+`fuse` 和 `fit` 接受 `--pd-policy strict|nearPD`。默认 `strict` 保留既有行为。它检查原矩阵，接受正定、合法半正定及舍入级负特征值，对实质不定矩阵报错。启用 `nearPD` 后，每个待处理块先加一次 `1e-6 I` 并尝试 Cholesky，成功即使用该块。失败时运行原生 C++ 的 `Matrix::nearPD` 协方差算法，验证收敛与 Cholesky 后交给后续计算。两种策略均适用于最终 K 及 B 模式实际参与传播的 Gss。C 模式用作回归条件的原始系谱子块仍须可做 Cholesky。
+
+默认投影允许方差随协方差一起变化。令 S 为该块加过扰动的矩阵，P 为交给下一步的矩阵。`pd.tsv` 的每行记录块名、策略、动作、扰动、迭代与收敛状态、原始和使用矩阵的最小特征值、`normF=‖P−S‖F`、`relative_normF=normF/‖S‖F`、最大单元素变化及末次迭代相对变化。只加扰动时投影量为零，未计算的谱值和未执行的迭代状态写 NA。`K_raw.tsv` 位于最终 K 的正定处理之前；若 B 的中间 Gss 已投影，该影响已经进入 K_raw。`K.tsv` 是实际用于拟合的全群核。搜索在参考群按每组权重构核，`search.tsv` 的 nearpd_blocks、max_relative_normF 属于参考群。full_status 记录各点的全群检查状态，选中点另有 full_nearpd_blocks、full_max_relative_normF；逐块明细见全群 pd.tsv。
+
+官方 example.zip 的完整嵌套示例可按以下方式运行。age 的 198 个表型个体都有基因型，参考群自动选权会触发覆盖检查。固定权重可以使用 1,407 个个体构核并为表型文件中的个体输出预测。
+
+```bash
+d=example-input
+build/fsblup fit --A "$d/test_matA.csv" --G "$d/test_matG.csv" --O "$d/test_matO.csv" \
+  --pheno "$d/test_pheno.csv" --id id --trait age --alpha .2 --beta .5 \
+  --pd-policy nearPD --threads 1 --write-k --out example-nearPD
+```
 
 ## 从源码构建
 

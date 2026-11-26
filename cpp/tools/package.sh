@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 builddir=${1:-build}
 dest=${2:-dist}
-name=fsblup-0.1.0-linux-x86_64-glibc2.34
+name=fsblup-0.2.0-linux-x86_64-glibc2.34
 mkdir -p "$dest"
 stage=$(mktemp -d "$dest/.package.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
@@ -27,7 +27,8 @@ cp /usr/share/licenses/openblas/LICENSE "$root/licenses/OpenBLAS"
 cp /usr/share/licenses/libgcc/COPYING* /usr/share/licenses/libquadmath/COPYING* "$root/licenses/"
 cp licenses/Armadillo.txt "$root/licenses/"
 cp README.md VALIDATION.md "$root/"
-cp -r CMakeLists.txt src tools tests licenses README.md VALIDATION.md "$root/source/cpp/"
+cp -r validation "$root/"
+cp -r CMakeLists.txt src tools tests licenses validation README.md VALIDATION.md "$root/source/cpp/"
 mkdir -p "$root/source/R"
 cp ../R/FSBLUP.R "$root/source/R/"
 cp ../LICENSE.md "$root/source/"

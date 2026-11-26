@@ -1,4 +1,5 @@
 #include "core.hpp"
+#include "near_pd.hpp"
 #include <queue>
 namespace fsb {
 Kernel pedigree(const Ids &ids, const Ids &sire, const Ids &dam, double cap) {
@@ -147,30 +148,64 @@ Layers Layers::subset(const Ids &ids) const {
           o.subset(intersect(ids, o.ids))};
 }
 namespace {
-// Positive semidefinite inputs receive the baseline diagonal shift. Assess the
-// unshifted spectrum on Cholesky failure so the shift cannot hide
-// indefiniteness.
-mat adjusted(const mat &raw, string &note) {
-  require(raw.is_finite(), "nonfinite covariance");
-  mat chol;
-  if (!arma::chol(chol, raw)) {
+bool cholesky_succeeds(const mat &covariance) {
+  mat factor;
+  return arma::chol(factor, covariance);
+}
+mat adjusted(const mat &raw, string &note, PdPolicy policy,
+             PdDiagnostics diagnostics, PdBlock &d) {
+  require(raw.is_finite(), d.block + ": nonfinite covariance");
+  constexpr double jitter = 1e-6;
+  mat k = raw;
+  k.diag() += jitter;
+  if (policy == PdPolicy::strict && !cholesky_succeeds(raw)) {
     vec eigen = arma::eig_sym(raw);
+    d.min_raw = eigen.min();
     double tolerance = 64 * std::numeric_limits<double>::epsilon() *
                        raw.n_rows * std::max(1., arma::abs(eigen).max());
     require(eigen.min() >= -tolerance,
-            "indefinite covariance, min eigenvalue=" +
+            d.block + ": indefinite covariance, min eigenvalue=" +
                 std::to_string(eigen.min()));
     note += "semidefinite/roundoff,";
+    require(cholesky_succeeds(k),
+            d.block + ": covariance still singular after jitter");
+    d.min_used = d.min_raw + jitter;
+  } else if (policy == PdPolicy::near_pd && !cholesky_succeeds(k)) {
+    // Match R's adj_pos order: jitter once, then nearPD on failure.
+    NearPdResult result;
+    try {
+      result = near_pd(k);
+    } catch (const std::runtime_error &ex) {
+      throw std::runtime_error(d.block + ": " + ex.what());
+    }
+    require(result.converged, d.block + ": nearPD failed to converge after " +
+                                  std::to_string(result.iterations) +
+                                  " iterations");
+    require(cholesky_succeeds(result.matrix),
+            d.block + ": nearPD output failed Cholesky");
+    d.projected = true;
+    d.iterations = result.iterations;
+    d.rel_tol = result.rel_tol;
+    d.min_raw = result.input_min_eigen - jitter;
+    d.norm_f = result.norm_f;
+    d.relative_norm_f = d.norm_f / arma::norm(k, "fro");
+    if (diagnostics == PdDiagnostics::full) {
+      d.min_used = arma::eig_sym(result.matrix).min();
+      d.max_abs_change = arma::abs(result.matrix - k).max();
+    }
+    note += "jitter=1e-6,nearPD";
+    return std::move(result.matrix);
   }
-  mat k = raw;
-  k.diag() += 1e-6;
   note += "jitter=1e-6";
   return k;
 }
-mat regression(const mat &cross, const mat &base) {
+mat factor_block(const mat &base, const string &label) {
   mat lower;
   require(arma::chol(lower, base, "lower"),
-          "singular pedigree conditioning block");
+          label + ": singular conditioning block");
+  return lower;
+}
+mat regression(const mat &cross, const mat &lower) {
   return arma::solve(arma::trimatu(lower.t()),
                      arma::solve(arma::trimatl(lower), cross.t()))
       .t();
@@ -181,10 +216,32 @@ uvec outside(size_t n, const uvec &s) {
   return arma::find(mask);
 }
 } // namespace
-Fusion fuse(const Layers &l, double alpha, double beta, BlockAudit *audit) {
+FusionPlan::Nested::Nested(const Layers &l) {
   const mat &a = l.a.values;
-  string mode = l.mode(), note;
+  s = positions(l.a.ids, l.o.ids);
+  std::set<string> observed(l.o.ids.begin(), l.o.ids.end());
+  Ids group2;
+  for (const auto &id : l.g.ids)
+    if (!observed.count(id))
+      group2.push_back(id);
+  g = positions(l.a.ids, group2);
+  u = outside(a.n_rows, positions(l.a.ids, l.g.ids));
+  a44 = a.submat(s, s);
+  g44 = l.g.subset(l.o.ids).values;
+  g22 = l.g.subset(group2).values;
+  mat lower44 = factor_block(a44, "A44");
+  r14 = regression(a.submat(u, s), lower44);
+  r24 = regression(a.submat(g, s), lower44);
+  k12 = regression(a.submat(u, g), factor_block(a.submat(g, g), "A22")) * g22;
+}
+Fusion FusionPlan::combine(double alpha, double beta, BlockAudit *audit,
+                           PdPolicy policy, PdDiagnostics diagnostics) {
+  const Layers &l = layers_;
+  const mat &a = l.a.values;
+  const string &mode = mode_;
+  string note;
   mat raw;
+  std::vector<PdBlock> pd_blocks;
   if (mode == "A") {
     if (l.g.ids == l.a.ids && l.o.ids == l.a.ids) {
       raw = (1 - alpha - beta) * a + beta * l.g.values + alpha * l.o.values;
@@ -192,11 +249,20 @@ Fusion fuse(const Layers &l, double alpha, double beta, BlockAudit *audit) {
       raw = (1 - alpha - beta) * a + beta * l.g.subset(l.a.ids).values +
             alpha * l.o.subset(l.a.ids).values;
     }
+  } else if (mode == "B" && beta == 0) {
+    // The entire propagated G/O layer has zero weight, even when its internal
+    // calibration cannot be identified (for example, with one omics sample).
+    raw = a;
+    note = "K:";
+    if (audit)
+      *audit = {};
   } else if (mode == "B") {
     mat g = l.g.subset(l.a.ids).values;
     auto s = positions(l.a.ids, l.o.ids), u = outside(a.n_rows, s);
     note = "Gss:";
-    mat base = adjusted(g.submat(s, s), note);
+    pd_blocks.push_back({"Gss"});
+    mat base =
+        adjusted(g.submat(s, s), note, policy, diagnostics, pd_blocks.back());
     auto &o = l.o.values;
     double od = arma::mean(o.diag()), gd = arma::mean(base.diag());
     mat t = base;
@@ -210,7 +276,7 @@ Fusion fuse(const Layers &l, double alpha, double beta, BlockAudit *audit) {
       if (audit)
         audit->calibrated = std::move(calibrated);
     }
-    mat reg = regression(g.submat(u, s), base);
+    mat reg = regression(g.submat(u, s), factor_block(base, "Gss"));
     mat h = g;
     h.submat(s, s) = t;
     h.submat(u, u) += reg * (t - base) * reg.t();
@@ -228,31 +294,28 @@ Fusion fuse(const Layers &l, double alpha, double beta, BlockAudit *audit) {
   } else {
     // Equation 3 with group 3 empty. Groups 1/2/4: pedigree only,
     // genotyped only, and jointly observed. All regressions use original A.
-    auto s = positions(l.a.ids, l.o.ids);
-    Ids group2;
-    std::set<string> observed(l.o.ids.begin(), l.o.ids.end());
-    for (auto &id : l.g.ids)
-      if (!observed.count(id))
-        group2.push_back(id);
-    auto g = positions(l.a.ids, group2),
-         u = outside(a.n_rows, positions(l.a.ids, l.g.ids));
-    mat a44 = a.submat(s, s), c = alpha * l.o.values +
-                                  beta * l.g.subset(l.o.ids).values +
-                                  (1 - alpha - beta) * a44;
-    mat g22 = l.g.subset(group2).values, r14 = regression(a.submat(u, s), a44);
+    if (!nested_)
+      nested_.emplace(l);
+    const auto &[u, g, s, a44, g44, g22, r14, r24, k12] = *nested_;
+    mat c = alpha * l.o.values + beta * g44 + (1 - alpha - beta) * a44;
     raw = a;
     raw.submat(u, u) += r14 * (c - a44) * r14.t();
     raw.submat(s, s) = c;
     raw.submat(g, g) = g22;
-    raw.submat(u, g) = regression(a.submat(u, g), a.submat(g, g)) * g22;
+    raw.submat(u, g) = k12;
     raw.submat(u, s) = r14 * c;
-    raw.submat(g, s) = regression(a.submat(g, s), a44) * c;
-    raw.submat(g, u) = raw.submat(u, g).t();
+    raw.submat(g, s) = r24 * c;
+    raw.submat(g, u) = k12.t();
     raw.submat(s, u) = raw.submat(u, s).t();
     raw.submat(s, g) = raw.submat(g, s).t();
   }
   raw = (raw + raw.t()) / 2;
-  mat k = adjusted(raw, note);
-  return {std::move(raw), std::move(k), note};
+  pd_blocks.push_back({"K"});
+  mat k = adjusted(raw, note, policy, diagnostics, pd_blocks.back());
+  return {std::move(raw), std::move(k), std::move(note), std::move(pd_blocks)};
+}
+Fusion fuse(const Layers &layers, double alpha, double beta, BlockAudit *audit,
+            PdPolicy policy, PdDiagnostics diagnostics) {
+  return FusionPlan(layers).combine(alpha, beta, audit, policy, diagnostics);
 }
 } // namespace fsb

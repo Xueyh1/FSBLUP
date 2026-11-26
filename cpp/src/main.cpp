@@ -1,7 +1,7 @@
 #include "cli.hpp"
 using namespace fsb;
 namespace {
-const char *help = R"(fsblup 0.1.0
+const char *help = R"(fsblup 0.2.0
   build --ped PED --snp SNP --omics OMICS [--omics-type generic|fpkm] --out DIR
   fuse --A A --G G --O O --alpha AWT --beta BWT --out DIR
   fit --pheno TABLE --id ID --trait TRAIT --A A --G G --O O --out DIR
@@ -9,6 +9,7 @@ const char *help = R"(fsblup 0.1.0
        | --year CUTOFF | --ngen CUTOFF] [--metric cor|rmse|auc] [--score-col COL]
       [--covar COL,...] [--factor COL,...] [--strict-simplex] [--write-k]
   All commands accept --threads N (default 1) and --memory-mb N (dense estimate).
+  fuse and fit accept --pd-policy strict|nearPD (default strict).
   Input tables have headers. Pedigree columns are ID,Sire,Dam (case-insensitive).
   Default tuning uses balanced 5-fold CV twice with seed 42. --out must be new or empty.
 )";
@@ -41,7 +42,7 @@ int main(int argc, char **argv) {
       return 0;
     }
     if (string(argv[1]) == "--version") {
-      std::cout << "fsblup 0.1.0\n";
+      std::cout << "fsblup 0.2.0\n";
       return 0;
     }
     string cmd = argv[1];

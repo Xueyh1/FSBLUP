@@ -1,5 +1,49 @@
 #include "core.hpp"
 namespace fsb {
+namespace {
+// Apply the p QR reflectors to K and y.  Once the leading coordinate of a
+// reflector has been eliminated, only the trailing covariance block is used.
+void residual_spectrum(const mat &kernel, const mat &design, const vec &phenotype,
+                       vec &eigen, vec &z) {
+  const arma::uword n = design.n_rows, p = design.n_cols;
+  // Wide designs leave a smaller contrast space. Blocked QR and matrix
+  // multiplication avoid a long series of memory-bound rank-two updates.
+  if (p >= 32 && p >= (n + 5) / 6) {
+    mat q, r, basis;
+    require(arma::qr(q, r, design), "design QR failed");
+    const auto contrast = q.tail_cols(n - p);
+    require(arma::eig_sym(eigen, basis, contrast.t() * kernel * contrast),
+            "REML decomposition failed");
+    z = basis.t() * (contrast.t() * phenotype);
+    return;
+  }
+  mat k = kernel, x = design;
+  vec y = phenotype;
+  for (arma::uword j = 0; j < p; ++j) {
+    vec v = x.col(j).tail(n - j);
+    v /= arma::norm(v);
+    v(0) += std::copysign(1., v(0));
+    v /= arma::norm(v);
+    if (j + 1 < p) {
+      auto remaining = x.submat(j, j + 1, n - 1, p - 1);
+      arma::rowvec projection = v.t() * remaining;
+      remaining -= 2 * v * projection;
+    }
+    auto response = y.tail(n - j);
+    response -= (2 * arma::dot(v, response)) * v;
+    auto block = k.submat(j, j, n - 1, n - 1);
+    vec w = block * v;
+    w -= arma::dot(v, w) * v;
+    // H K H = K - 2(v w' + w v') for H = I - 2v v'.
+    for (arma::uword c = 0; c < v.n_elem; ++c)
+      block.col(c) -= (2 * w(c)) * v + (2 * v(c)) * w;
+  }
+  mat basis;
+  require(arma::eig_sym(eigen, basis, k.submat(p, p, n - 1, n - 1)),
+          "REML decomposition failed");
+  z = basis.t() * y.tail(n - p);
+}
+} // namespace
 Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
             double fixed) {
   require(k.n_rows == k.n_cols && k.n_rows == x.n_rows && y.n_elem == k.n_rows,
@@ -11,15 +55,13 @@ Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
           "training design rank deficient or no residual degrees of freedom");
   require(yt.is_finite() && x.is_finite(),
           "nonfinite training phenotype or design");
-  mat q, r;
-  require(arma::qr(q, r, xt), "design QR failed");
-  mat contrast = q.tail_cols(n - p);
+  // Translate the response when the first design column is an intercept.
+  // Contrasts and genomic predictions are invariant to this translation.
+  const double offset = arma::all(x.col(0) == 1.) ? yt(0) : 0.;
+  yt -= offset;
   mat kt = k.submat(train, train);
-  vec eigen;
-  mat basis;
-  require(arma::eig_sym(eigen, basis, contrast.t() * kt * contrast),
-          "REML decomposition failed");
-  vec z = basis.t() * (contrast.t() * yt);
+  vec eigen, z;
+  residual_spectrum(kt, xt, yt, eigen, z);
   require(arma::norm(z) > 64 * arma::datum::eps * arma::norm(yt),
           "constant response or exact fixed-effect fit");
   auto profile = [&](double log_lambda) {
@@ -82,6 +124,8 @@ Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
   require(arma::solve(b, wx, wy, arma::solve_opts::no_approx), "GLS failed");
   vec residual = arma::solve(arma::trimatu(lower.t()), wy - wx * b);
   vec u = k.cols(train) * residual;
-  return {b, u, x * b + u, lambda, vu, lambda * vu, profile(best), status};
+  vec yhat = x * b + u + offset;
+  b(0) += offset;
+  return {b, u, yhat, lambda, vu, lambda * vu, profile(best), status};
 }
 } // namespace fsb

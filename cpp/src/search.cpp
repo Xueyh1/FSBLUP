@@ -88,16 +88,21 @@ double score(const vec &truth, const vec &pred, const string &metric) {
   }
   return pairs / (neg * pos);
 }
-Evaluation evaluate_weight(const Layers &l, double a, double b, const mat &x,
+Evaluation evaluate_weight(FusionPlan &plan, double a, double b, const mat &x,
                            const vec &y, const vec &truth,
-                           const std::vector<Fold> &folds,
-                           const string &metric) {
+                           const std::vector<Fold> &folds, const string &metric,
+                           PdPolicy policy) {
   Evaluation e;
   e.scores.resize(folds.size(), NAN);
   string location;
   try {
-    auto k = fuse(l, a, b);
+    auto k = plan.combine(a, b, nullptr, policy, PdDiagnostics::tuning);
     e.correction = k.correction;
+    for (const auto &block : k.pd_blocks) {
+      e.nearpd_blocks += block.projected;
+      e.max_relative_norm_f =
+          std::max(e.max_relative_norm_f, block.relative_norm_f);
+    }
     double sum = 0;
     size_t count = 0;
     for (size_t j = 0; j < folds.size(); ++j) {

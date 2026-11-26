@@ -1,0 +1,2 @@
+block	policy	action	jitter	iterations	converged	min_eigen_raw	min_eigen_used	normF	relative_normF	max_abs_change	rel_tol
+K	nearPD	nearPD	1e-6	2	1	-4.0284446331264698	2.4567619302941054e-07	6.6824627558865988	0.085508902542106122	0.22612853022461177	4.1234913196198204e-15

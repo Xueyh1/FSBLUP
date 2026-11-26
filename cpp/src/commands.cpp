@@ -1,6 +1,41 @@
 #include "cli.hpp"
 namespace fsb {
 namespace {
+const char *policy_name(PdPolicy policy) {
+  return policy == PdPolicy::strict ? "strict" : "nearPD";
+}
+PdPolicy read_policy(const Options &opt) {
+  auto value = opt.get("pd-policy", "strict");
+  if (value == "strict")
+    return PdPolicy::strict;
+  if (value == "nearPD" || value == "nearpd")
+    return PdPolicy::near_pd;
+  throw std::runtime_error("unknown --pd-policy: " + value +
+                           " (expected strict or nearPD)");
+}
+void write_pd(const fs::path &dir, const Fusion &fusion, PdPolicy policy) {
+  auto f = output(dir / "pd.tsv");
+  f << "block\tpolicy\taction\tjitter\titerations\tconverged\tmin_eigen_raw"
+       "\tmin_eigen_used\tnormF\trelative_normF\tmax_abs_change\trel_tol\n";
+  auto optional_value = [&](double x) {
+    if (std::isfinite(x))
+      f << x;
+    else
+      f << "NA";
+  };
+  for (const auto &d : fusion.pd_blocks) {
+    f << d.block << '\t' << policy_name(policy) << '\t'
+      << (d.projected ? "nearPD" : "jitter") << "\t1e-6\t" << d.iterations
+      << '\t' << (d.projected ? "1" : "NA") << '\t';
+    optional_value(d.min_raw);
+    f << '\t';
+    optional_value(d.min_used);
+    f << '\t' << d.norm_f << '\t' << d.relative_norm_f << '\t'
+      << d.max_abs_change << '\t';
+    optional_value(d.rel_tol);
+    f << '\n';
+  }
+}
 Ids names(const Options &opt, string key) {
   Ids cols;
   if (opt.has(key)) {
@@ -147,19 +182,25 @@ Labels labels_from_file(const fs::path &path, const Ids &ids, bool &temporal) {
             "missing reference in folds file");
   return labels;
 }
-std::pair<double, double> tune(const Options &opt, const Table &t,
-                               const Phenotype &p, const Layers &layers,
-                               const fs::path &dir) {
+struct Tuning {
+  Search search;
+  Ids fold_columns;
+  string metric, coverage;
+};
+Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
+            const Layers &layers, const fs::path &dir, PdPolicy policy) {
   Ids refs;
   for (auto i : p.ref)
     refs.push_back(p.ids[i]);
   auto l = layers.subset(refs);
-  require(!l.o.ids.empty() &&
-              (layers.mode() == "A" ||
-               (l.o.ids.size() < l.g.ids.size() &&
-                (layers.mode() == "B" || l.g.ids.size() < l.a.ids.size()))),
-          "reference coverage degenerates: " + l.counts() +
-              "; supply fixed --alpha and --beta");
+  const string mode = layers.mode();
+  const bool identifiable =
+      !l.o.ids.empty() &&
+      (mode == "A" || (l.o.ids.size() < l.g.ids.size() &&
+                       (mode == "B" || l.g.ids.size() < l.a.ids.size())));
+  if (!identifiable)
+    throw TuningFailure("reference coverage degenerates: " + l.counts() +
+                        "; supply fixed --alpha and --beta");
   string metric = opt.get("metric", "cor");
   bool time = false;
   Labels labels;
@@ -189,31 +230,106 @@ std::pair<double, double> tune(const Options &opt, const Table &t,
   for (auto &f : folds)
     summary << f.repeat << '\t' << f.fold << '\t' << f.train.n_elem << '\t'
             << f.valid.n_elem << '\t' << f.reason << '\n';
-  auto result = search(
-      opt.has("strict-simplex"), metric == "rmse", [&](double a, double b) {
-        return evaluate_weight(l, a, b, x, y, truth, folds, metric);
-      });
+  FusionPlan reference(l);
+  auto result = search(opt.has("strict-simplex"), metric == "rmse",
+                       [&](double a, double b) {
+                         return evaluate_weight(reference, a, b, x, y, truth,
+                                                folds, metric, policy);
+                       });
+  Ids columns;
+  for (const auto &f : folds)
+    columns.push_back("r" + std::to_string(f.repeat) + "f" +
+                      std::to_string(f.fold));
+  return {std::move(result), std::move(columns), metric, l.counts()};
+}
+// Validate complete-cohort covariance in CV score order. Candidate phenotypes
+// never enter this check; the common case constructs just one full kernel.
+Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
+                     double &alpha, double &beta, PdPolicy policy) {
+  const auto &result = t.search;
+  const auto &trials = result.trials;
+  const size_t count = trials.size();
+  Ids rejected(count);
+  size_t selected = count, failures = 0;
+  Fusion kernel;
+  FusionPlan full(layers);
+  for (;;) {
+    size_t next = count;
+    for (size_t i = 0; i < count; ++i) {
+      const auto &e = trials[i].result;
+      if (!e.reason.empty() || !std::isfinite(e.value) || !rejected[i].empty())
+        continue;
+      if (next == count ||
+          (t.metric == "rmse" ? e.value < trials[next].result.value - 1e-12
+                              : e.value > trials[next].result.value + 1e-12))
+        next = i;
+    }
+    if (next == count)
+      break;
+    const auto &v = trials[next];
+    try {
+      kernel = full.combine(v.alpha, v.beta, nullptr, policy);
+    } catch (const std::runtime_error &ex) {
+      rejected[next] = string("full coverage: ") + ex.what();
+      ++failures;
+      continue;
+    }
+    selected = next;
+    alpha = v.alpha;
+    beta = v.beta;
+    break;
+  }
   auto trace = output(dir / "search.tsv");
   trace << "stage\talpha\tbeta\tmean\tvalid\treason\tcorrection";
-  for (auto &f : folds)
-    trace << "\tr" << f.repeat << "f" << f.fold;
-  trace << '\n';
-  for (auto &v : result.trials) {
-    auto &e = v.result;
+  for (const auto &column : t.fold_columns)
+    trace << '\t' << column;
+  trace << "\treference_best\tfull_status\tfull_reason\tpd_policy\tnearpd_"
+           "blocks\tmax_relative_normF\tfull_nearpd_blocks\tfull_max_relative_"
+           "normF\n";
+  for (size_t i = 0; i < count; ++i) {
+    const auto &v = trials[i];
+    const auto &e = v.result;
     trace << v.stage << '\t' << v.alpha << '\t' << v.beta << '\t' << e.value
-          << '\t' << e.reason.empty() << '\t' << e.reason << '\t'
+          << '\t' << e.reason.empty() << '\t' << field(e.reason) << '\t'
           << e.correction;
-    for (auto s : e.scores)
-      trace << '\t' << s;
+    for (auto score : e.scores)
+      trace << '\t' << score;
+    const bool ref_best = std::isfinite(result.best) &&
+                          v.alpha == result.alpha && v.beta == result.beta;
+    const char *status = i == selected          ? "selected"
+                         : !rejected[i].empty() ? "rejected"
+                                                : "not_checked";
+    trace << '\t' << ref_best << '\t' << status << '\t' << field(rejected[i])
+          << '\t' << policy_name(policy) << '\t' << e.nearpd_blocks << '\t'
+          << e.max_relative_norm_f;
+    if (i == selected) {
+      size_t projected = 0;
+      double relative = 0;
+      for (const auto &block : kernel.pd_blocks) {
+        projected += block.projected;
+        relative = std::max(relative, block.relative_norm_f);
+      }
+      trace << '\t' << projected << '\t' << relative;
+    } else
+      trace << "\tNA\tNA";
     trace << '\n';
   }
   if (!std::isfinite(result.best))
-    throw TuningFailure(result.stop + ": " +
-                        result.trials.front().result.reason);
-  output(dir / "tuning.tsv") << "metric\tselection_score\tstop\tcoverage\n"
-                             << metric << '\t' << result.best << '\t'
-                             << result.stop << '\t' << l.counts() << '\n';
-  return {result.alpha, result.beta};
+    throw TuningFailure(result.stop + ": " + trials.front().result.reason);
+  if (selected == count)
+    throw TuningFailure(
+        "no reference-eligible weights produced a valid full covariance; " +
+        std::to_string(failures) + " rejected (see search.tsv)");
+  output(dir / "tuning.tsv")
+      << "metric\tselection_score\tstop\tcoverage\treference_best_alpha"
+         "\treference_best_beta\treference_best_score\tselected_"
+         "alpha\tselected_beta"
+         "\tfull_rejections\n"
+      << t.metric << '\t' << trials[selected].result.value << '\t'
+      << result.stop << '\t' << field(t.coverage) << '\t' << result.alpha
+      << '\t' << result.beta << '\t' << result.best << '\t' << alpha << '\t'
+      << beta << '\t' << failures << '\n';
+  return kernel;
 }
 } // namespace
 void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
@@ -222,6 +338,7 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
     build(opt, dir, cap, tm);
     return;
   }
+  const auto policy = read_policy(opt);
   Layers l{read_kernel(opt.get("A"), cap), read_kernel(opt.get("G"), cap),
            read_kernel(opt.get("O"), cap)};
   auto mode = l.mode();
@@ -240,6 +357,7 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
     if (opt.has("strict-simplex"))
       require(a >= 0 && b >= 0 && a + b <= 1, "weights outside simplex");
   }
+  Fusion k;
   Phenotype p;
   if (cmd == "fit") {
     int random = opt.has("folds") || opt.has("repeats") || opt.has("seed");
@@ -253,29 +371,25 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
     positions(l.a.ids, p.ids);
     tm.mark("read_phenotype");
     if (!fixed) {
-      std::tie(a, b) = tune(opt, t, p, l, dir);
+      const auto tuning = tune(opt, t, p, l, dir, policy);
       tm.mark("search");
+      k = select_fusion(tuning, l, dir, a, b, policy);
     }
   } else
     require(fixed, "fuse requires alpha and beta");
-  Fusion k;
-  try {
-    k = fuse(l, a, b);
-  } catch (const std::runtime_error &e) {
-    if (cmd == "fit" && !fixed)
-      throw TuningFailure("selected weights alpha=" + std::to_string(a) +
-                          " beta=" + std::to_string(b) +
-                          " failed on full coverage: " + e.what());
-    throw;
-  }
+  if (fixed)
+    k = fuse(l, a, b, nullptr, policy);
   tm.mark("fusion");
   output(dir / "fusion.tsv")
-      << "mode\talpha\tbeta\tcorrection\n"
-      << mode << '\t' << a << '\t' << b << '\t' << k.correction << '\n';
+      << "mode\talpha\tbeta\tcorrection\tpd_policy\n"
+      << mode << '\t' << a << '\t' << b << '\t' << k.correction << '\t'
+      << policy_name(policy) << '\n';
+  write_pd(dir, k, policy);
   if (cmd == "fuse" || opt.has("write-k")) {
     write_matrix(dir / "K_raw.tsv", l.a.ids, k.raw);
     write_matrix(dir / "K.tsv", l.a.ids, k.k);
     save_ids(dir / "ids.tsv", l.a.ids);
+    tm.mark("write_kernels");
   }
   if (cmd == "fit") {
     auto idx = positions(l.a.ids, p.ids);

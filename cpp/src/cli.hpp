@@ -22,7 +22,7 @@ struct Options {
     if (cmd == "build")
       allowed.insert({"ped", "snp", "omics", "omics-type"});
     else {
-      allowed.insert({"A", "G", "O", "alpha", "beta"});
+      allowed.insert({"A", "G", "O", "alpha", "beta", "pd-policy"});
       if (cmd == "fit")
         allowed.insert({"pheno", "id", "trait", "folds", "repeats", "seed",
                         "folds-file", "year", "ngen", "metric", "score-col",

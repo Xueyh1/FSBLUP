@@ -16,7 +16,8 @@ double number(const string &s) {
   } catch (const std::exception &) {
     throw std::runtime_error("expected finite number: " + s);
   }
-  require(used == s.size() && std::isfinite(x), "expected finite number: " + s);
+  if (used != s.size() || !std::isfinite(x))
+    throw std::runtime_error("expected finite number: " + s);
   return x;
 }
 int integer(const string &s, int minimum) {
@@ -68,16 +69,18 @@ struct Reader {
     delim = line.find('\t') != string::npos ? '\t' : ',';
     header = parse(line);
   }
-  Ids parse(string line) {
+  Ids parse(const string &line) {
     ++line_no;
-    if (!line.empty() && line.back() == '\r')
-      line.pop_back();
+    size_t length = line.size();
+    if (length && line.back() == '\r')
+      --length;
     Ids row;
+    row.reserve(header.size());
     string cell;
     bool quoted = false, closed = false;
-    for (size_t i = 0; i < line.size(); ++i) {
+    for (size_t i = 0; i < length; ++i) {
       char c = line[i];
-      if (quoted && c == '"' && i + 1 < line.size() && line[i + 1] == '"') {
+      if (quoted && c == '"' && i + 1 < length && line[i + 1] == '"') {
         cell += '"';
         ++i;
       } else if (c == '"' && !closed && (quoted || cell.empty())) {
@@ -88,8 +91,8 @@ struct Reader {
         cell.clear();
         closed = false;
       } else {
-        require(!closed && (quoted || c != '"'),
-                "invalid quoted field: " + filename);
+        if (closed || (!quoted && c == '"'))
+          throw std::runtime_error("invalid quoted field: " + filename);
         cell += c;
       }
     }
@@ -194,7 +197,8 @@ Kernel read_kernel(const fs::path &p, double cap) {
   }
   unique_ids(rows);
   require(rows.size() == n, "matrix is not square");
-  k = k.cols(positions(cols, rows));
+  if (cols != rows)
+    k = k.cols(positions(cols, rows));
   double scale = std::max(1., arma::abs(k).max());
   require(arma::abs(k - k.t()).max() <= 1e-10 * scale,
           "asymmetric kernel: " + p.string());

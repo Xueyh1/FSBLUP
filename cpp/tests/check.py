@@ -125,6 +125,60 @@ def run(tmp):
     assert abs(float(edge["r1f2"])-float(direct["rmse"]))<1e-8
     print("grid fold RMSE max absolute error",*worst)
     assert min(float(r["mean"]) for r in trace if r["valid"]=="1")==float(read(out/"tuning.tsv")[0]["selection_score"])
+    # The optimal reference kernel can become indefinite for a new individual.
+    # Full-cohort checks may use its covariances but never its phenotype.
+    fallback = tmp / "fallback_input"
+    fallback.mkdir()
+    ids = [f"{i:03}" for i in range(1, 9)]
+    train_y = [-1, 1, -2, 2]
+    valid_y = [1.25 * .25 * y / (2 + 1e-6) for y in train_y[:3]]
+    ph_rows = [{"ID": id_, "trait": y, "year": 2020 if i < 4 else 2021}
+               for i, (id_, y) in enumerate(zip(ids, train_y + valid_y + ["NA"]))]
+    ph_file = write(fallback / "pheno.tsv", ph_rows)
+    for layer in "AGO":
+        rows = []
+        for i, id_ in enumerate(ids):
+            row = {"ID": id_}
+            for j, other in enumerate(ids):
+                val = float(i == j)
+                if layer == "A" and i == j == 7:
+                    val = 10
+                if layer != "A" and min(i, j) < 3 and abs(i - j) == 4:
+                    val = .25
+                row[other] = val
+            rows.append(row)
+        write(fallback / (layer + ".tsv"), rows)
+    args = layers(base=fallback) + ["--trait", "trait", "--pheno", ph_file,
+                                    "--year", 2020, "--metric", "rmse"]
+    out = cli("fit", "full_fallback", args)
+    trials = read(out / "search.tsv")
+    winner, = [r for r in trials if r["reference_best"] == "1"]
+    assert winner["full_status"] == "rejected" and "indefinite" in winner["full_reason"]
+    assert abs(float(winner["mean"])) < 1e-10
+    chosen, = [r for r in trials if r["full_status"] == "selected"]
+    summary, = read(out / "tuning.tsv")
+    assert float(chosen["mean"]) == float(summary["selection_score"])
+    assert float(chosen["mean"]) > float(summary["reference_best_score"])
+    assert int(summary["full_rejections"]) == sum(r["full_status"] == "rejected" for r in trials)
+    assert all(float(r["mean"]) >= float(chosen["mean"]) - 1e-12 for r in trials
+               if r["valid"] == "1" and r["full_status"] != "rejected")
+    predicted = read(out / "predictions.tsv")
+    assert predicted[-1]["role"] == "candidate" and math.isfinite(float(predicted[-1]["u"]))
+    # The same reference-best point needs projection only on the full cohort.
+    projected = cli("fit", "full_repaired", args + ["--pd-policy", "nearPD"])
+    projected_best, = [r for r in read(projected/"search.tsv") if r["reference_best"]=="1"]
+    assert projected_best["full_status"]=="selected" and projected_best["nearpd_blocks"]=="0"
+    assert projected_best["full_nearpd_blocks"]=="1" and float(projected_best["full_max_relative_normF"])>0
+    # When all reference-eligible candidates fail, publish the complete trace.
+    for layer in "AGO":
+        path = fallback / (layer + ".tsv")
+        rows = read(path)
+        rows[-1][ids[-1]] = -2
+        write(path, rows)
+    failed = cli("fit", "all_full_invalid", args, "no reference-eligible weights")
+    assert (failed / "failure.txt").is_file()
+    assert all(r["full_status"] == "rejected" for r in read(failed / "search.tsv")
+               if r["valid"] == "1")
     random=cli("fit","random",fit+layers()+["--strict-simplex"])
     replay=cli("fit","replay",fit+layers()+["--folds-file",random/"folds.tsv","--strict-simplex"])
     assert (random/"search.tsv").read_bytes()==(replay/"search.tsv").read_bytes()

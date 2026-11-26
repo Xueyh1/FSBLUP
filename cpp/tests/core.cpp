@@ -46,6 +46,26 @@ int main(int argc, char **argv) {
     std::cout << "fixed lambda max |u error| " << err << " ID "
               << k.ids[arma::abs(m.u - numbers(expected, "u")).index_max()]
               << "\n";
+    // With K=I and a balanced group design, GLS estimates each group mean.
+    // This exercises the high-rank design path using a closed-form BLUP.
+    {
+      constexpr size_t n = 120, groups = 40;
+      mat design(n, groups, arma::fill::zeros);
+      design.col(0).ones();
+      vec response(n), deviation(n);
+      for (size_t i = 0; i < n; ++i) {
+        size_t group = i % groups;
+        if (group)
+          design(i, group) = 1.;
+        deviation(i) = double(i / groups) - 1.;
+        response(i) = double(group) + deviation(i);
+      }
+      auto wide = solve(arma::eye<mat>(n, n), design, response,
+                        arma::regspace<uvec>(0, n - 1), .7);
+      close(arma::abs(wide.u - deviation / 1.7).max(), 0, 1e-10);
+      close(arma::abs(wide.yhat - (response - deviation + deviation / 1.7)).max(),
+            0, 1e-10);
+    }
     // Verify every BB000 intermediate using the reconstructed propagation and
     // mixture.
     Layers l{load("A"), load("G"), load("Ob")};
@@ -74,6 +94,16 @@ int main(int argc, char **argv) {
     auto idx = positions(l.a.ids, refs);
     require(arma::abs(rk.k - result.k.submat(idx, idx)).max() > 1e-5,
             "restriction before fusion");
+    Layers singleton{l.a, l.g, l.o.subset({l.o.ids.front()})};
+    auto endpoint = fuse(singleton, .5, 0, &audit);
+    close(arma::abs(endpoint.raw - l.a.values).max(), 0);
+    mat expected_endpoint = l.a.values;
+    expected_endpoint.diag() += 1e-6;
+    close(arma::abs(endpoint.k - expected_endpoint).max(), 0);
+    require(audit.base.is_empty() && audit.calibrated.is_empty() &&
+                audit.replacement.is_empty() && audit.propagated.is_empty(),
+            "zero weight skips the propagated layer");
+    rejects([&] { fuse(singleton, .5, .5); });
     mat v(20, 3, arma::fill::zeros);
     v(0, 0) = 2;
     v.col(1) = arma::linspace(1, 20, 20);

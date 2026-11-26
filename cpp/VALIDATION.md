@@ -4,9 +4,9 @@
 
 ## 覆盖与数值定义
 
-**全覆盖。** 三个集合相同，按 A 的 ID 排列。原始融合矩阵为 (1−α−β)A+βG+αO。先检验实质非对称，容差为 1e-10 × max(1,max|Kij|)。容差内两轴取平均。融合原矩阵先试 Cholesky；失败时计算最小特征值，低于 −64 ε n max(1,max|λᵢ|) 即判无效。允许合法半正定与舍入级负特征值，保留 `raw` 并在交给求解器的 K 上统一加 1e-6 I，无投影。`fusion.tsv` 记录分块与全局扰动。R 的 `adj_pos`（206–215 行）先加扰动再尝试 Cholesky，还可走 nearPD。
+**全覆盖。** 三个集合相同，按 A 的 ID 排列。原始融合矩阵为 (1−α−β)A+βG+αO。先检验实质非对称，容差为 1e-10 × max(1,max|Kij|)。容差内两轴取平均。默认 strict 对融合原矩阵先试 Cholesky；失败时计算最小特征值，低于 −64 ε n max(1,max|λᵢ|) 即判无效。允许合法半正定与舍入级负特征值，保留 `raw` 并在交给求解器的 K 上统一加 1e-6 I，无投影。`fusion.tsv` 记录分块与全局扰动。R 的 `adj_pos`（206–215 行）先加扰动再尝试 Cholesky，还可走 nearPD。
 
-**组学子集 B。** 对应 `BB000`（256–291 行）。S 为有 O 的个体，U 为其余个体。用 B=G_SS+1e-6 I。令 d 为平均对角线，m 为全矩阵元素均值。斜率 w=(m(B)−d(B))/(m(O)−d(O))，截距 v=d(O)−w d(B)。校准量 wO+v 的截距作用于所有元素。T=α(wO+v)+(1−α)B。用三角求解得到 L=G_US B⁻¹。填 H_SS=T、H_US=LT、H_UU=G_UU+L(T−B)L′，另一块按转置填。K_raw=(1−β)A+βH/d(H)。α=0 时直接取 T=B。固定 α=.2、β=.5 的 `B_base/B_cal/B_T/B_H/B_K` 记录逐步参考。子集核夹具 Ob 在原始 O 子块上加单位阵以构造可识别、稳定的校准用例。测试还对参考子集重算 B_Kref，验证它与全体先融合再截取确有差异。
+**组学子集 B。** 对应 `BB000`（256–291 行）。S 为有 O 的个体，U 为其余个体。默认通过 Cholesky 的块用 B=G_SS+1e-6 I；nearPD 策略触发投影时用修正后的 B。令 d 为平均对角线，m 为全矩阵元素均值。斜率 w=(m(B)−d(B))/(m(O)−d(O))，截距 v=d(O)−w d(B)。校准量 wO+v 的截距作用于所有元素。T=α(wO+v)+(1−α)B。用三角求解得到 L=G_US B⁻¹。填 H_SS=T、H_US=LT、H_UU=G_UU+L(T−B)L′，另一块按转置填。K_raw=(1−β)A+βH/d(H)。α=0 时直接取 T=B。固定 α=.2、β=.5 的 `B_base/B_cal/B_T/B_H/B_K` 记录逐步参考。子集核夹具 Ob 在原始 O 子块上加单位阵以构造可识别、稳定的校准用例。测试还对参考子集重算 B_Kref，验证它与全体先融合再截取确有差异。
 
 **严格嵌套 C。** 公式 3 的第 3 组为空。1=A\\G，2=G\\O，4=O，全用原始 A 的相应行列。令 C=αO₄₄+βG₄₄+(1−α−β)A₄₄，Rᵢⱼ=Aᵢⱼ Aⱼⱼ⁻¹，用分解求解。以下六块与其转置完全定义生产矩阵，融合后做同样的协方差有效性检查。
 
@@ -21,7 +21,7 @@
 
 G₂₂ 与 G₄₄ 来自原始基因组矩阵，O₄₄ 来自原始组学。公式 3 的这些块没有 BB000 的仿射校准或平均对角线归一化。α=0 消去共同观测块中的 O，组 2 保留 G₂₂。R 脚本独立逐元素构建 6 个体参考。固定 A/G/ID，改变 O 的一个对角和一个非对角元素，核的 11/14/24/44 块按公式响应，12 与 22 保持原值，α=0 时两次结果相同。`C_legacy.tsv` 保存旧 `CC000` 的输出，生成时严格验证相同扰动使旧版输出逐元素完全相同。R 第 315、317 行覆盖 M3，第 336 行再读取覆盖结果。
 
-覆盖由完整输入的集合决定。组 1 为空且有组 2 时采用已验证的 B 规则。仅组 4 时采用全覆盖规则。G=O 且为 A 的真子集、O 不属于 G 的个体、A 外个体、空层均不开放融合。调参限制到参考群后若丢失区分原覆盖所需的组，报告无法辨识权重。实质不定的候选直接失格；最终全体融合不定也返回错误。可另行准备已核实的共同覆盖矩阵开展同组分析，这会改变分析群体。
+覆盖由完整输入的集合决定。组 1 为空且有组 2 时采用已验证的 B 规则。仅组 4 时采用全覆盖规则。G=O 且为 A 的真子集、O 不属于 G 的个体、A 外个体、空层均不开放融合。调参限制到参考群后若丢失区分原覆盖所需的组，报告无法辨识权重。固定权重产生实质不定协方差时返回错误。自动调参依参考群评分和既定并列规则逐个检查全体融合，直至找到可行权重或已评估的合格点耗尽。后一种情形返回错误，并保留各点的全群诊断。可另行准备已核实的共同覆盖矩阵开展同组分析，这会改变分析群体。
 
 **原始核。** A 按亲本拓扑序递推。G 遵循 AGHmatrix 2.1.4 的 diploid VanRaden 默认分支与 Mcheck。保留缺失比例 ≤0.5 的位点，在位点内用观察剂量均值插补。插补后 p=(2n₂+n₁)/(2n)，q=(2n₀+n₁)/(2n)，整数基因型按完全相等计数。非整数插补值进入中心化剂量，不计入这些基因型计数，因此 q 可与 1−p 不同。分母为 2Σpq。所有位点均被过滤或分母为零时显式报错。O 先补零，FPKM 再删低于 0.1 的样本占比至少 95% 的列，去常数列，用样本标准差标准化，每层全部样本共同参与，O=WW′/保留列数。`Omatrix`（684–705 行）中负空索引和单列降维在 C++ 端按实际保留集合处理。测试覆盖零列需过滤、恰好 95%、仅余一列、全部丢弃。
 
@@ -50,7 +50,95 @@ G₂₂ 与 G₄₄ 来自原始基因组矩阵，O₄₄ 来自原始组学。�
 
 最大逐折差来自边界。rrBLUP 在 λ 原尺度用 R optimize 默认精度，得到 λ=6.8200e−5、目标 8.446344705；独立 R Cholesky 参考在下界的目标为 8.446198844。测试分别比较软件基线和直接解，避免将边界优化精度当作 ID/评分误差。额外覆盖包括两轴及表型独立置换、前导零、秩退化、AUC 并列与单类折、非法覆盖、半正定端点、不定核、内存限额、时间验证和无有效分数。固定真值的不可评分折对所有权重共同排除。
 
-## 实际数据与性能
+## nearPD 0.2.0 验收
+
+2026-11-26 在本机 Slurm 节点复验。初始 HEAD 和远程 cpp 均为 `cff637f2da8c50f7d072dddca10344cf0bb7e4cd`，工作树干净。附件 SHA-256 为 `1718d693cb3a738b1c2873779585a674db6324534337bb043298125d1b4d55c9`，校验包内清单，执行 `git apply --check` 后仅应用 from_cff637f。下列结果来自本机重新生成的参考和实际运行。
+
+### 实现与覆盖
+
+CRAN Matrix 1.7-0 的 R/nearPD.R 使用 Dykstra 残差 R=Y−D，在 PSD 投影后以 X−R 更新 D。C++ 按严格大于 eig.tol×最大特征值筛选谱分量；以 ‖Y−X‖∞ / ‖Y‖∞ 为相对变化，矩阵无穷范数按最大绝对行和计算，该比值不超过 conv.tol 时收敛。阈值分别为 1e−6、1e−7，最多 100 次。最后以 posd.tol=1e−8 乘投影后最大特征值的绝对值设下限，按 PSD 投影后的对角元素（至少为该下限）对结果做对角缩放。CLI 采用协方差选项 corr=FALSE、keepDiag=FALSE。移植文件保留原作者、GPL-2.0-or-later 许可和源码位置。[Matrix 1.7-0 原始实现](https://github.com/cran/Matrix/blob/1.7-0/R/nearPD.R)
+
+默认 strict 检查原核。显式 nearPD 仅在加过一次 1e−6 I 的块 S 仍无法 Cholesky 时投影。结果必须有限、收敛且再次通过 Cholesky。B 中参与传播的 Gss 和最终 K 分别处理。C 的 A22/A44 使用原始系谱条件块，分解失败报告块名。参考和全群各自持有与 ID 顺序绑定的融合计划，C 的索引、条件回归系数及与权重无关的 12 块可跨权重复用；最终选择的全群核直接交给 fit。每个权重在参考群中只融合一次，各折分别在自己的训练集估计方差比。
+
+Release 用 GCC 11.5，ASan+UBSan 用 Clang 22.1.8，开启 leak detection 和遇错停止。两种构建的 6 项离线 CTest 均通过。12 个核心用例以本机 Matrix 1.7-0 重建，涵盖迭代上限、非对称、缩放、谱阈值与对角约束。CLI 用例还检查无需投影的单次扰动、无正谱、全群才需投影的选权、B 的 Gss、C 的奇异条件块和按 ID 对齐的独立 GLS。
+
+### 官方完整示例
+
+样本集合为 A=1407、G=198、O=74。R 4.4.1、Matrix 1.7-0、rrBLUP 4.6.3；R 与 C++ 使用 OpenBLAS 0.3.29 单线程。R 按生产模式 C 的六个分块独立重建原始核，先加 1e−6 I，再调用 Matrix::nearPD。预测比较使用输出核中相同的 198 个表型 ID，与上游旧 CC000 的算法区别见前文。
+
+固定 α=.2、β=.5 时，原始最小特征值 −4.02844463312647，修正后为 2.45676193e−7。投影收敛于第 2 次迭代。以 S 为基准，‖P−S‖F 为 6.682462755887，相对修正为 **8.550890254%**，最大元素改变量 0.226128530225。计入对角扰动、直接与 K_raw 比较时，相对量为 8.550896333%，最大元素改变量 0.226129530225。[分块诊断](validation/nearpd/official-pd.tsv)
+
+| 独立 R 与 C++ 的比较量 | 实测差异 |
+|---|---:|
+| 原始 K 最大绝对差 | 6.66e−16 |
+| 修正 K 最大逐元素绝对差 | 5.94e−14（X805，X810） |
+| 修正 K 相对 Frobenius 差，以 R 修正 K 为分母 | 5.24e−14 |
+| 全部 198 个体 max abs Δu / Δyhat | 4.868e−6 / 4.654e−6 |
+| 20 候选 max abs Δu / Δyhat | 4.868e−6 / 4.643e−6 |
+| 固定 R 的 λ，在 C++ 核独立解 GLS，对 R 的 u / yhat | 2.86e−13 / 2.87e−13 |
+| 固定 C++ 的 λ，独立 GLS 对 CLI 的 u/yhat，二者最大值 | 1.51e−14 |
+
+| 参数 | C++ | R | 绝对差 |
+|---|---:|---:|---:|
+| Vu | 41.02977435 | 41.02974791 | 2.6434e−5 |
+| Ve | 180.29668768 | 180.29670786 | 2.0180e−5 |
+| λ | 4.394289039 | 4.394292362 | 3.3229e−6 |
+| 截距 | 1.679963962 | 1.679963737 | 2.2533e−7 |
+
+按原表型顺序从第 1 行开始每 10 行遮蔽 age，保留 178 个参考和 20 个候选。另将这 20 个体的 yhat 与被遮蔽的原始 age 比较，RMSE=11.56783、Pearson=0.19580；这是该次固定留出的描述性表现。[完整数值对照](validation/nearpd/official-comparison.json)
+
+**15 个固定权重。** 在完整官方矩阵上单独拟合初始单纯形各点，15/15 均投影且在第 2 次迭代收敛。相对修正量范围为 8.55294%（.25,.5）至 8.83149%（0,0）。每个点的原始/修正最小特征值、绝对/相对 Frobenius 量及最大元素变化均已保存。原始 age 自动选权时参考群 A=198、G=198、O=74，缺少仅有系谱的组，因而报告覆盖退化。固定 .2/.5 的 strict 路径也已单独复验，拒绝最小特征值约 −4.028445 的完整核。[逐点修正表](validation/nearpd/official-grid.tsv) · [官方 age 调参诊断](validation/nearpd/official-age-auto.txt)
+
+**可识别嵌套搜索。** 另一套 30 个体的合成输入保留 27 个参考，其中仅系谱、有系谱和基因型、三层共同观测三组分别为 7、8、12 个体。固定 3 折，三个源核的两轴分别换序。R 对参考子集重建 K、投影并用显式 GLS 剖面似然逐折优化；另在全群重建选定核。C++ 和 R 均选出 (.75,.25)。C++ 三折 RMSE 约 1.178610、1.387564、1.269387，均值 **1.278520593**。15 个初始点及 3 个细化点的各折及均值对 R 的最大差 1.58e−8，选定全群 K 最大差 1.51e−14。score 列均为参考群调参分数。这个结果与官方全群固定权重的修正表分别报告。[逐折搜索与全群检查](validation/nearpd/nested-search.tsv) · [独立 R 参考](tests/nested/scores.tsv)
+
+### 性能复核
+
+Slurm 单任务，Intel Xeon Silver 4216，LP64 OpenBLAS pthread 0.3.29，`OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 --threads 1`。每个场景先预热一次，取后三次的中位数。表中阶段及总量为 fsblup 记录的墙钟秒，总量含其余元数据输出，RSS 单位为 KiB。完整快速路径使用相同 ID 和维度，G/O 替换为原始 A 的相应主子矩阵。投影路径使用原始官方 G/O。15 权重为 15 个独立固定 fit 的阶段时间之和，各批取最大进程 RSS；此处仅输出预测和诊断。
+
+| 版本与场景 | 读取 s | 搜索 s | 最终融合 s | 写核 s | REML/BLUP s | 总 s | 峰值 KiB |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 补丁原版，同维度仅扰动 | 0.32922 | — | 0.12988 | 2.5441 | 0.0069538 | 3.0063 | 80440 |
+| 补丁原版，完整官方，固定 .2/.5 | 0.32885 | — | 3.8797 | 2.5967 | 0.0073802 | 6.8125 | 218756 |
+| 补丁原版，完整官方，15 个固定权重 | 4.8585 | — | 57.564 | — | 0.11441 | 62.579 | 218996 |
+| 补丁原版，30 个体，嵌套搜索 | 0.00088554 | 0.024174 | 0.0012522 | 0.0015468 | 0.00034784 | 0.028627 | 11456 |
+| 复用后，同维度仅扰动 | 0.33133 | — | 0.13172 | 2.5562 | 0.0069599 | 3.0298 | 82784 |
+| 复用后，完整官方，固定 .2/.5 | 0.33082 | — | 3.8956 | 2.6354 | 0.0074046 | 6.8705 | 221320 |
+| 复用后，完整官方，15 个固定权重 | 4.938 | — | 58.046 | — | 0.1148 | 63.144 | 221308 |
+| 复用后，30 个体，嵌套搜索 | 0.0008757 | 0.021279 | 0.0012568 | 0.0017488 | 0.00034737 | 0.026037 | 11452 |
+
+复用仅发生在同一个进程、同一 ID 集合。30 个体搜索阶段的中位数从 0.02417 s 到 0.02128 s。完整官方单次 fit 的时间主要在谱分解和 TSV 输出。保留条件块使固定 .2/.5 的峰值 RSS 增加 2,564 KiB；单次总时间中位数由 6.81 s 变为 6.87 s。计时来自共享计算节点。复用前后使用相同输入、相同折表和独立 R 参考；官方 .2/.5 的 K_raw、K、模型和预测文件逐字节相同。已通过 Cholesky 的块跳过特征分解，参考群候选跳过仅用于最终诊断的修正后最小特征值求解。[预热与各次实测](validation/nearpd/timings.tsv)
+
+### 复现命令
+
+在 cpp 目录使用 README 的 Release 构建命令。下面的 R 解释器须能加载指定版本的 Matrix 与 rrBLUP。官方对照脚本另外使用 NumPy 和 pandas。运行目录须为新目录。
+
+```bash
+export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
+export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+cmake -S . -B build-san -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ \
+  -DARMADILLO_INCLUDE_DIR="$PWD/.deps/usr/include" -DBUILD_TESTING=ON \
+  '-DCMAKE_CXX_FLAGS_DEBUG=-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all'
+srun -n1 -c4 --mem=8G cmake --build build-san -j4
+srun -n1 -c1 --mem=3G ctest --test-dir build-san --output-on-failure
+srun -n1 -c1 --mem=2G ctest --test-dir build --output-on-failure
+
+Rscript --vanilla tests/nearpd_generate.R tests/nearpd_cases.tsv
+Rscript --vanilla tests/nearpd_nested.R tests/nested
+d=example-input
+srun -n1 -c1 --mem=3G Rscript --vanilla tools/nearpd_official.R "$d" nearpd-R
+args=(--A "$d/test_matA.csv" --G "$d/test_matG.csv" --O "$d/test_matO.csv" --id id --trait age)
+srun -n1 -c1 --mem=3G build/fsblup fit "${args[@]}" --pheno nearpd-R/masked.tsv \
+  --alpha .2 --beta .5 --pd-policy nearPD --threads 1 --write-k --out nearpd-fixed
+python3 tools/nearpd_compare.py nearpd-R nearpd-fixed
+for scenario in official grid nested; do
+  srun -n1 -c1 --mem=3G python3 tools/nearpd_bench.py build/fsblup "$d" nearpd-R/masked.tsv \
+    "bench-$scenario" --scenario "$scenario" --nested tests/nested
+done
+# 此诊断命令按预期以非零状态退出，并写出 failure.txt。
+build/fsblup fit "${args[@]}" --pheno "$d/test_pheno.csv" --pd-policy nearPD --out age-auto
+```
+
+## 0.1.0 基线的实际数据与性能
 
 上游 example.zip 的 SHA-256 为 `c43dde9f91297b346928865e1d88fbdc731e623542b03b2e0f25e8b0a0bdafd6`。实际数据行×数值/特征列（均另有 ID）：A 1407×1407，G 198×198，O 74×74，组学 74×5000，SNP 198×5000，系谱 1407×2，表型 198×3（id、age、bf、czs）。矩阵两轴实际都使用 X 前缀字符串。完整原始文件重新构核后，按两轴 ID 对齐归档矩阵，A/G/O 的最大绝对差分别为 5.11e−15（X1393,X1393）、1.32e−14（X1328,X1313）、8.44e−15（X1292,X1292）。[示例数据](https://github.com/Xueyh1/FSBLUP/releases/download/example/example.zip)
 
@@ -63,7 +151,7 @@ G₂₂ 与 G₄₄ 来自原始基因组矩阵，O₄₄ 来自原始组学。�
 | C++ 同输入固定 .2/.5 | .021 | .00062 | .00200 | — | .0245 | 11696 |
 | C++ 同输入默认 5 折×2 | .021 | .00023 | .00152 | .163 | .186 | 11808 |
 
-R 的 .409 s 从重读与 C++ 相同的 TSV 算起，进程总耗时 3.18 s 含载包、准备子集与写输入，RSS 为进程峰值。C++ 命令的外部耗时分别 .03 s 与 .19 s。固定权重的 u 对 R 最大差 6.05e−12（X1305），λ 在上界。完整嵌套归档矩阵在 .2/.5 时最小特征值约 −4.028445，程序拒绝拟合；74 个体结果属于另一个明确限定的覆盖群体。
+R 的 .409 s 从重读与 C++ 相同的 TSV 算起，进程总耗时 3.18 s 含载包、准备子集与写输入，RSS 为进程峰值。C++ 命令的外部耗时分别 .03 s 与 .19 s。固定权重的 u 对 R 最大差 6.05e−12（X1305），λ 在上界。完整嵌套归档矩阵在 .2/.5 时最小特征值约 −4.028445。对同一例，全部 15 个初始点的最小特征值落在 −4.095 至 −3.986，strict 策略拒绝不定协方差。默认 age 调参还会因参考群中缺少仅有系谱的个体而提前终止。74 个体结果对应三层共同覆盖的子群。
 
 ```bash
 # 取上游示例并解包到 example-input，然后在 cpp 目录执行
@@ -79,14 +167,14 @@ srun -n1 -c1 --mem=3G /usr/bin/time -v build/fsblup fit "${args[@]}" --folds 5 -
 
 ## 发布复验
 
-构建与打包命令见 README。解包后 `bin/fsblup` 通过相对 RPATH 找到 `lib/` 下的 libopenblasp.so.0、libstdc++.so.6、libgcc_s.so.1、libgfortran.so.5、libquadmath.so.0。系统提供动态加载器、libc 和 libm。包中附有 `linked-libraries.txt`。使用 Ubuntu Base 22.04.5 amd64 的独立只读根文件系统，Bubblewrap 隔离宿主库、R、环境变量与网络，运行 build、固定权重 fit 与带搜索的 fit。根文件系统的 glibc 是 2.35，发布基线主机的 glibc 是 2.34。
+构建与打包命令见 README。解包后 `bin/fsblup` 通过相对 RPATH 找到 `lib/` 下的 libopenblasp.so.0、libstdc++.so.6、libgcc_s.so.1、libgfortran.so.5、libquadmath.so.0。系统提供动态加载器、libc 和 libm。包中附有 `linked-libraries.txt`。使用 Ubuntu Base 22.04.5 amd64 的独立只读根文件系统，Bubblewrap 隔离宿主库、R、环境变量与网络，运行 build、固定权重 fit、带搜索的 fit 和真实不定的二个体 nearPD fuse。脚本检查 K 的四个元素与二阶解析解，并检查 pd.tsv 的投影动作、两次迭代、收敛标记与正的最小特征值。根文件系统的 glibc 是 2.35，发布基线主机的 glibc 是 2.34。
 
 ```bash
 curl -fLO https://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-amd64.tar.gz
 echo '242cd8898b33ea806ef5f13b1076ed7c76f9f989d18384452f7166692438ff1a  ubuntu-base-22.04.5-base-amd64.tar.gz' | sha256sum -c -
 mkdir ubuntu-base
 tar -xzf ubuntu-base-22.04.5-base-amd64.tar.gz -C ubuntu-base --exclude='dev/*'
-srun -n1 -c1 --mem=2G tools/clean-smoke.sh ubuntu-base dist/fsblup-0.1.0-linux-x86_64-glibc2.34.tar.gz clean-results
+srun -n1 -c1 --mem=2G tools/clean-smoke.sh ubuntu-base dist/fsblup-0.2.0-linux-x86_64-glibc2.34.tar.gz clean-results
 ```
 
 此测试在隔离环境内逐 ID 核验全部 24 行固定权重 u/yhat 与 R 参考的绝对误差 ≤1e−5，并检验候选数为 4。Slurm 共享宿主内核。当前支持密集单核单性状。任意非嵌套覆盖、多组学任意多核、重复记录、PLINK 原生格式、APY 和矩阵自由解法属于后续范围。
