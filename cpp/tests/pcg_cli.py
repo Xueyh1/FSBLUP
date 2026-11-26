@@ -1,5 +1,4 @@
 import csv
-import math
 import subprocess
 import sys
 from pathlib import Path
@@ -160,6 +159,34 @@ def run(root):
         "fit",
         [*matrices, *model, *weights, *fixed, "--trace", "exact"],
         "applies",
+    )
+    invoke(
+        root,
+        "no-backtrack",
+        "fit",
+        [
+            *matrices,
+            *weights,
+            "--pheno",
+            DATA / "pheno.tsv",
+            "--trait",
+            "trait",
+            "--max-backtracks",
+            0,
+            "--init-vu",
+            ".001",
+            "--init-ve",
+            "100",
+        ],
+        "backtracking failed",
+    )
+    # The operator can refuse expensive exact spectra before materializing them.
+    invoke(
+        root,
+        "cache-budget",
+        "fit",
+        ["--cache", root / "cacheB", "--memory-mb", ".001", *model, *weights],
+        "memory",
     )
     for method in ["ai-reml", "em-reml"]:
         d = invoke(

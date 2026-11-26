@@ -84,12 +84,14 @@ def main():
     p.add_argument("--omics", type=int, default=9)
     p.add_argument("--threads", default="1,2,4,8")
     p.add_argument("--cohorts", default="small,large")
+    p.add_argument("--reml-maxiter", type=int)
     p.add_argument("--methods", default="fixed")
     p.add_argument("--modes", default="A,C")
     p.add_argument("--memory-mb", default="2048")
     p.add_argument("--trace", default="exact")
     p.add_argument("--tag", default="run")
     p.add_argument("--storage", default="auto")
+    p.add_argument("--trace-rank", default="0")
     p.add_argument("--reorth", default="local")
     p.add_argument("--slq-depth", default="40")
     p.add_argument("--probe-solver", default="lanczos")
@@ -168,7 +170,12 @@ def main():
                             text=True,
                             env={
                                 **os.environ,
-                                "OPENBLAS_NUM_THREADS": str(nt),
+                                "OPENBLAS_NUM_THREADS": str(
+                                    1
+                                    if method.startswith("cv-")
+                                    and a.parallel == "weights"
+                                    else nt
+                                ),
                                 "OMP_NUM_THREADS": "1",
                             },
                         )
@@ -246,8 +253,12 @@ def main():
                                 opts += ["--lambda", "1.5"]
                             else:
                                 opts += ["--trace", a.trace]
+                                if a.reml_maxiter:
+                                    opts += ["--reml-maxiter", str(a.reml_maxiter)]
                                 if a.trace == "hutchinson":
                                     opts += [
+                                        "--trace-rank",
+                                        a.trace_rank,
                                         "--slq-reorth",
                                         a.reorth,
                                         "--probe-solver",

@@ -57,6 +57,7 @@ FitOptions fit_options(const Options &opt, Timing &tm) {
     string backend = opt.get("probe-solver", "pcg");
     require(backend == "pcg" || backend == "lanczos", "unknown probe solver");
     o.probe_lanczos = backend == "lanczos";
+    o.trace_rank = integer(opt.get("trace-rank", "0"), 0);
     auto orth = opt.get("slq-reorth", "full");
     require(orth == "full" || orth == "local",
             "invalid SLQ reorthogonalization");
@@ -71,16 +72,28 @@ FitOptions fit_options(const Options &opt, Timing &tm) {
     require(o.mc_tol > 0 && o.slq_tol > 0, "invalid stochastic tolerances");
   } else
     for (auto key :
-         {"slq-reorth", "probe-solver", "probes", "max-probes", "probe-seed",
-          "slq-depth", "probe-batch", "mc-tol", "slq-tol"})
+         {"trace-rank", "slq-reorth", "probe-solver", "probes", "max-probes",
+          "probe-seed", "slq-depth", "probe-batch", "mc-tol", "slq-tol"})
       require(!opt.has(key), string("--") + key + " requires hutchinson");
+  if (opt.has("max-backtracks"))
+    require(o.varcomp == "ai-reml" || o.trace == "hutchinson",
+            "--max-backtracks requires AI or stochastic updating");
+  o.max_backtracks = integer(
+      opt.get("max-backtracks", o.trace == "hutchinson" ? "39" : "54"), 0);
   o.log_every = integer(opt.get("log-every", "10"), 1);
+  o.record_every = o.log_every;
   if (tm.log) {
     o.trace_rhs = tm.log->trace_enabled();
-    tm.log->info("solver=" + o.solver + " varcomp=" + o.varcomp +
-                 " trace=" + o.trace);
+    if (tm.log->info_enabled())
+      tm.log->info("solver=" + o.solver + " varcomp=" + o.varcomp +
+                   " trace=" + o.trace);
     if (tm.log->debug_enabled())
-      o.event = [log = tm.log](const string &s) { log->debug(s); };
+      o.event = [log = tm.log](const string &s) {
+        if (log->trace_enabled())
+          log->trace(s);
+        else
+          log->debug(s);
+      };
   }
   return o;
 }
@@ -93,7 +106,10 @@ void write_audits(const fs::path &dir, const std::vector<FitAudit> &audits,
          "evaluations\ttrace_se_g\ttrace_se_e\ttrace_identity_error\tlogdet_"
          "se\tpaired_lik_se\tslq_depth_delta_per_n\tlogratio_se\tprec_"
          "seconds\toperator_s\testimation_s\tgls_s\tpredict_s\tvector_"
-         "workspace_mib\tprobe_seed\tprobe_solver\tstatus\n";
+         "workspace_mib\tinitial_Vu\tinitial_"
+         "Ve\tpreconditioner\tprec_rank\tzero_rhs\tresidual_restarts\tcentered_"
+         "solves\trtol\tatol\tprobe_seed\tprobe_solver\ttrace_"
+         "stride\tupdates\tcross_rhs\tstatus\n";
     for (auto &a : audits)
       f << a.context << '\t' << o.solver << '\t' << o.varcomp << '\t' << a.n
         << '\t' << a.rhs << '\t' << a.matvec << '\t' << a.max_iterations << '\t'
@@ -105,13 +121,18 @@ void write_audits(const fs::path &dir, const std::vector<FitAudit> &audits,
         << '\t' << a.depth_error << '\t' << a.logratio_se << '\t'
         << a.prec_seconds << '\t' << a.operator_seconds << '\t'
         << a.estimation_seconds << '\t' << a.gls_seconds << '\t'
-        << a.predict_seconds << '\t' << a.workspace_mib << '\t' << o.seed
-        << '\t' << (o.probe_lanczos ? "lanczos+pcg-check" : "pcg") << '\t'
-        << a.status << '\n';
+        << a.predict_seconds << '\t' << a.workspace_mib << '\t' << a.initial_vu
+        << '\t' << a.initial_ve << '\t' << o.preconditioner << '\t'
+        << a.prec_rank << '\t' << a.zero_rhs << '\t' << a.residual_restarts
+        << '\t' << a.centered_solves << '\t' << o.rtol << '\t' << o.atol << '\t'
+        << o.seed << '\t' << (o.probe_lanczos ? "lanczos+pcg-check" : "pcg")
+        << '\t' << o.record_every << '\t' << a.updates << '\t' << a.cross_rhs
+        << '\t' << a.status << '\n';
   });
   write_file(dir / (prefix + "reml_trace.tsv"), [&](std::ostream &f) {
     f << "context\testimator\ttrace\titeration\tVu\tVe\tcontrast_loglik\tscore_"
-         "g\tscore_e\tstep\tbacktracks\tAI_rcond\tstatus\n";
+         "g\tscore_e\tstep\tbacktracks\tAI_rcond\tprobes\tpaired_se\tdepth_"
+         "error_per_n\tstatus\n";
     for (auto &a : audits)
       for (auto &r : a.steps)
         f << a.context << '\t' << o.varcomp << '\t' << o.trace << '\t'
@@ -121,7 +142,8 @@ void write_audits(const fs::path &dir, const std::vector<FitAudit> &audits,
               double(a.n - a.fixed_rank) * a.scale_exponent * std::log(2.))
           << '\t' << std::scalbn(r.sg, -2 * a.scale_exponent) << '\t'
           << std::scalbn(r.se, -2 * a.scale_exponent) << '\t' << r.step << '\t'
-          << r.backtracks << '\t' << r.condition << '\t' << r.status << '\n';
+          << r.backtracks << '\t' << r.condition << '\t' << r.probes << '\t'
+          << r.paired_se << '\t' << r.depth_error << '\t' << r.status << '\n';
   });
 }
 const char *policy_name(PdPolicy policy) {
@@ -251,7 +273,7 @@ struct Phenotype {
   mat x;
   uvec ref;
 };
-Phenotype phenotype(const Options &opt, const Table &t) {
+Phenotype phenotype(const Options &opt, const Table &t, double cap) {
   Phenotype p;
   p.ids = t.column(opt.get("id", "ID"));
   unique_ids(p.ids);
@@ -267,28 +289,40 @@ Phenotype phenotype(const Options &opt, const Table &t) {
   p.ref = arma::find_finite(p.y);
   require(!p.ref.empty(), "no reference phenotypes");
   p.effects = {"(Intercept)"};
-  p.x.ones(n, 1);
-  for (auto &c : names(opt, "covar")) {
-    auto v = t.column(c);
-    vec z(n);
-    for (size_t i = 0; i < n; ++i)
-      z[i] = number(v[i]);
-    p.x.insert_cols(p.x.n_cols, z);
-    p.effects.push_back(c);
+  auto covariates = names(opt, "covar");
+  std::vector<std::pair<size_t, string>> indicators;
+  for (auto &name : covariates) {
+    t.col(name);
+    p.effects.push_back(name);
   }
-  for (auto &c : names(opt, "factor")) {
-    auto v = t.column(c);
-    std::set<string> levels(v.begin(), v.end());
+  for (auto &name : names(opt, "factor")) {
+    auto values = t.column(name);
+    std::set<string> levels(values.begin(), values.end());
     require(!levels.empty() && !missing(*levels.begin()) && !levels.count("NA"),
-            "missing factor: " + c);
-    p.levels.push_back(c + "=" + *levels.begin());
-    for (auto iter = std::next(levels.begin()); iter != levels.end(); ++iter) {
-      vec z(n);
-      for (size_t i = 0; i < n; ++i)
-        z[i] = (v[i] == *iter);
-      p.x.insert_cols(p.x.n_cols, z);
-      p.effects.push_back(c + "=" + *iter);
+            "missing factor: " + name);
+    p.levels.push_back(name + "=" + *levels.begin());
+    size_t column = t.col(name);
+    for (auto it = std::next(levels.begin()); it != levels.end(); ++it) {
+      indicators.emplace_back(column, *it);
+      p.effects.push_back(name + "=" + *it);
     }
+  }
+  require(p.ref.n_elem > p.effects.size(),
+          "training design rank deficient or no residual degrees of freedom");
+  require(double(n) * p.effects.size() * 16. / 1048576. < cap,
+          "fixed design exceeds --memory-mb");
+  p.x.ones(n, p.effects.size());
+  size_t column = 1;
+  for (auto &name : covariates) {
+    auto source = t.col(name);
+    for (size_t i = 0; i < n; ++i)
+      p.x(i, column) = number(t.rows[i][source]);
+    ++column;
+  }
+  for (auto &[source, level] : indicators) {
+    for (size_t i = 0; i < n; ++i)
+      p.x(i, column) = t.rows[i][source] == level;
+    ++column;
   }
   unique_ids(p.effects);
   return p;
@@ -328,6 +362,7 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
   Ids refs;
   for (auto i : p.ref)
     refs.push_back(p.ids[i]);
+  double worker_cap = cap;
   if (opt.get("parallel", "blas") == "weights") {
     // Dense shared layers/conditionals, design, output reserve; each private
     // task includes full reference K, nearPD/LAPACK/REML scratch and
@@ -350,11 +385,23 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
           opts.solver == "direct")
         per += 160. * n * n / 1048576.;
     }
+    if (opts.trace == "hutchinson" || opts.preconditioner == "nystrom") {
+      double room =
+          (cache ? 256. * layers.a.ids.size() : 64. * n * n) / 1048576.;
+      per = std::max(per, room +
+                              solver_workspace(refs.size(), refs.size(),
+                                               p.x.n_cols, opts) /
+                                  1048576. +
+                              9);
+    }
+    if (cache && cache->resident)
+      per += 8. * n * (cache->g.columns + cache->o.columns) / 1048576.;
     require(cap >= shared + per,
             "--memory-mb insufficient for one candidate workspace");
     int requested = std::min(15, integer(opt.get("threads", "1"), 1));
     tm.weight_workers = static_cast<size_t>(
         std::min(double(requested), std::floor((cap - shared) / per)));
+    worker_cap = (cap - shared) / tm.weight_workers;
     write_file(dir / "worker_memory.tsv", [&](std::ostream &f) {
       f << "shared_mib\tper_worker_mib\tworkers\testimated_mib\n"
         << shared << '\t' << per << '\t' << tm.weight_workers << '\t'
@@ -412,7 +459,13 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
     reference.emplace(l);
   FitOptions fold_options = opts;
   fold_options.ids = &refs;
-  fold_options.memory_mb /= tm.weight_workers;
+  // At most 15 grid + 40 refinement points. Bound retained history separately
+  // from the numerical worker buffers; full debug events remain streamable.
+  double trace_budget = std::max(1., cap * 1048576. * .04);
+  fold_options.record_every = std::max(
+      double(opts.log_every), std::ceil(55. * folds.size() * opts.max_reml *
+                                        sizeof(Iteration) / trace_budget));
+  fold_options.memory_mb = worker_cap;
   auto result = search(
       opt.has("strict-simplex"), metric == "rmse",
       [&](double a, double b) {
@@ -420,8 +473,7 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
           Evaluation ev;
           ev.scores.resize(folds.size(), NAN);
           try {
-            auto prepared =
-                cache->prepare(refs, a, b, policy, cap / tm.weight_workers);
+            auto prepared = cache->prepare(refs, a, b, policy, worker_cap);
             size_t count = 0;
             double sum = 0;
             for (size_t j = 0; j < folds.size(); ++j) {
@@ -433,8 +485,11 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
                               " beta=" + std::to_string(b) +
                               " repeat=" + std::to_string(f.repeat) +
                               " fold=" + std::to_string(f.fold);
-              auto op =
-                  prepared.restrict(refs, f.train, cap / tm.weight_workers);
+              auto op = prepared.restrict(
+                  refs, f.train, worker_cap,
+                  solver_workspace(f.train.n_elem, refs.size(), p.x.n_cols,
+                                   fold_options) /
+                      1048576.);
               auto m = fit_operator(op, x.rows(f.train), x, y.elem(f.train),
                                     fold_options, audit);
               ev.scores[j] =
@@ -468,7 +523,7 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
   for (auto &t : result.trials)
     for (auto &a : t.result.fits)
       audits.push_back(std::move(a));
-  write_audits(dir, audits, opts, "cv_");
+  write_audits(dir, audits, fold_options, "cv_");
   PdTimes pd;
   double folds_s = 0;
   for (const auto &t : result.trials) {
@@ -609,6 +664,18 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
   require(opt.has("cache") ||
               (!opt.has("cache-storage") && !opt.has("cache-backend")),
           "cache options require --cache");
+  double output_estimate = 0, output_available = 0;
+  auto check_write_space = [&](const Ids &ids) {
+    if (cmd != "fuse" && !opt.has("write-k"))
+      return;
+    double need = 52. * ids.size() * ids.size() + 4096;
+    for (auto &id : ids)
+      need += 8 * (id.size() + 4);
+    auto available = fs::space(dir).available;
+    require(available > need, "insufficient staging disk space for --write-k");
+    output_estimate = need;
+    output_available = available;
+  };
   Layers l;
   std::optional<Cache> cache;
   bool use_op = false;
@@ -617,9 +684,14 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
             "--cache conflicts with external kernels");
     cache.emplace(opt.get("cache"), cap);
     auto storage = opt.get("cache-storage", "auto");
-    require(storage == "auto" || storage == "stream", "invalid cache storage");
+    require(storage == "auto" || storage == "stream" || storage == "resident",
+            "invalid cache storage");
     cache->streaming = storage == "stream";
+    cache->resident = storage == "resident";
+    check_write_space(cache->ped.ids);
     auto mode = cache->mode();
+    require(!cache->resident || mode == "A",
+            "resident storage requires common coverage");
     double a = number(opt.get("alpha", "0")), b = number(opt.get("beta", "0"));
     auto backend = opt.get("cache-backend", "auto");
     require(backend == "auto" || backend == "operator" || backend == "dense",
@@ -657,6 +729,8 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
   } else
     l = {read_kernel(opt.get("A"), cap), read_kernel(opt.get("G"), cap),
          read_kernel(opt.get("O"), cap)};
+  if (!cache)
+    check_write_space(l.a.ids);
   auto mode = l.mode();
   write_file(dir / "memory.tsv", [&](std::ostream &f) {
     f << "estimated_dense_mib\tlimit_mib\n"
@@ -692,7 +766,7 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
             "fixed weights, random folds, external folds and time split are "
             "mutually exclusive");
     auto t = read_table(opt.get("pheno"));
-    p = phenotype(opt, t);
+    p = phenotype(opt, t, cap);
     opts.ids = &p.ids;
     positions(l.a.ids, p.ids);
     tm.mark("read_phenotype");
@@ -731,6 +805,10 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
     write_matrix(dir / "K_raw.tsv", l.a.ids, k.raw);
     write_matrix(dir / "K.tsv", l.a.ids, k.k);
     save_ids(dir / "ids.tsv", l.a.ids);
+    write_file(dir / "matrix_output_budget.tsv", [&](auto &f) {
+      f << "estimated_bytes\tavailable_bytes\n"
+        << output_estimate << '\t' << output_available << '\n';
+    });
     tm.mark("write_kernels");
   }
   if (cmd == "fit") {
@@ -749,11 +827,24 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
     audit.context =
         "final alpha=" + std::to_string(a) + " beta=" + std::to_string(b);
     Model m;
-    if (use_op) {
-      auto op = selected_operator->restrict(p.ids, p.ref, cap);
-      m = fit_operator(op, p.x.rows(p.ref), p.x, p.y.elem(p.ref), opts, audit);
-    } else
-      m = fit_dense(k.k, idx, p.x, p.y, p.ref, opts, audit);
+    try {
+      if (use_op) {
+        auto op = selected_operator->restrict(
+            p.ids, p.ref, cap,
+            solver_workspace(p.ref.n_elem, p.ids.size(), p.x.n_cols, opts) /
+                1048576.);
+        m = fit_operator(op, p.x.rows(p.ref), p.x, p.y.elem(p.ref), opts,
+                         audit);
+      } else
+        m = fit_dense(k.k, idx, p.x, p.y, p.ref, opts, audit);
+    } catch (const std::runtime_error &error) {
+      if (fixed)
+        throw;
+      audit.status = error.what();
+      write_audits(dir, {audit}, opts, "");
+      throw TuningFailure("final fit failed at selected weights: " +
+                          audit.status);
+    }
     if (cache)
       write_file(dir / "cache_usage.tsv", [&](auto &f) {
         f << "mode\tbackend\tfeature_bytes\tread_calls\tread_seconds\tdecode_"
@@ -762,11 +853,19 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
           << cache->io.bytes.load() << '\t' << cache->io.reads.load() << '\t'
           << cache->io.read_ns.load() * 1e-9 << '\t'
           << cache->io.decode_ns.load() * 1e-9 << '\t' << cache->verified_bytes
-          << '\t' << (cache->streaming ? "stream" : "auto") << '\t'
-          << p.ids.size() << '\n';
+          << '\t'
+          << (cache->streaming  ? "stream"
+              : cache->resident ? "resident"
+                                : "auto")
+          << '\t' << p.ids.size() << '\n';
       });
 
     tm.mark("final_reml_blup");
+    if (tm.log && tm.log->info_enabled())
+      tm.log->info("stage=model alpha=" + std::to_string(a) +
+                   " beta=" + std::to_string(b) +
+                   " n_train=" + std::to_string(p.ref.n_elem) +
+                   " status=" + m.status + " RHS=" + std::to_string(audit.rhs));
     write_file(dir / "predictions.tsv", [&](std::ostream &f) {
       f << "id\trole\tu\tyhat\n";
       for (size_t i = 0; i < p.ids.size(); ++i)
@@ -779,14 +878,12 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
       g << "Vu\tVe\tlambda\tstatus\tprofile_"
            "objective\treference\tcandidate\tsolver\tvarcomp\ttrace\tcontrast_"
            "loglik\n"
-        << m.vu << '\t' << m.ve << '\t' << m.lambda << '\t' << m.status << '\t'
-        << (std::isfinite(m.objective) ? ([&] {
-             std::ostringstream value;
-             value << std::setprecision(17) << m.objective;
-             return value.str();
-           })()
-                                       : string("NA"))
-        << '\t' << p.ref.n_elem << '\t' << p.ids.size() - p.ref.n_elem << '\t'
+        << m.vu << '\t' << m.ve << '\t' << m.lambda << '\t' << m.status << '\t';
+      if (std::isfinite(m.objective))
+        g << m.objective;
+      else
+        g << "NA";
+      g << '\t' << p.ref.n_elem << '\t' << p.ids.size() - p.ref.n_elem << '\t'
         << opts.solver << '\t' << opts.varcomp << '\t'
         << ((opts.varcomp == "fixed" || opts.varcomp == "profile-reml")
                 ? "none"

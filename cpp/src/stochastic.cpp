@@ -23,7 +23,10 @@ struct ProbeSet {
   using Pair = std::pair<Rule, Rule>;
   std::vector<Pair> rules;
   std::optional<Pair> design_rule, response_rule;
-  double traceK;
+  double traceK, tail_mean = 0;
+  mat directions;
+  vec anchors;
+  std::vector<vec> energy_deviation;
   ProbeSet(const TrainKernel &kernel, const FitOptions &options, FitAudit &a)
       : k(kernel), o(options), audit(a) {
     traceK = arma::accu(k.diagonal);
@@ -34,6 +37,24 @@ struct ProbeSet {
       keys.push_back(h);
     }
     require(keys.size() == k.diagonal.n_elem, "missing stochastic probe IDs");
+    const size_t rank = std::min(keys.size() - 1, size_t(o.trace_rank));
+    if (rank) {
+      mat sketch(keys.size(), rank);
+      // Independent pilot domain. Conditional on this basis, each subsequent
+      // Rademacher quadratic minus the known trace has expectation zero.
+      for (size_t j = 0; j < rank; ++j)
+        sketch.col(j) = probe((uint64_t(1) << 40) + j);
+      mat q, r;
+      require(arma::qr_econ(q, r, k.apply(sketch)), "trace control QR failed");
+      mat small = q.t() * k.apply(q), rot;
+      audit.matvec += 2 * rank;
+      require(arma::eig_sym(anchors, rot, .5 * small + .5 * small.t()),
+              "trace control eigensolve failed");
+      anchors = arma::clamp(anchors, 0., arma::datum::inf);
+      directions = q * rot;
+      tail_mean =
+          std::max(0., (traceK - arma::accu(anchors)) / (keys.size() - rank));
+    }
   }
   vec probe(size_t index) const {
     vec z(keys.size());
@@ -110,8 +131,37 @@ struct ProbeSet {
     return {rule(std::min(used, o.slq_depth)), rule(used)};
   }
   void ensure(size_t count) {
-    while (rules.size() < count)
-      rules.push_back(build(probe(rules.size())));
+    while (rules.size() < count) {
+      vec z = probe(rules.size());
+      rules.push_back(build(z));
+      if (!anchors.empty())
+        energy_deviation.push_back(arma::square(directions.t() * z) - 1);
+    }
+  }
+  mat controls(double g, double e, size_t count) const {
+    mat out(3, count, arma::fill::zeros);
+    if (anchors.empty() && keys.size() > 512)
+      return out;
+    double mean = traceK / keys.size(), den = g * mean + e;
+    mat f(3, anchors.n_elem);
+    if (!anchors.empty()) {
+      vec d = g * anchors + e;
+      double tail = g * tail_mean + e;
+      f.row(0) = (arma::log(d) - std::log(tail)).t();
+      f.row(1) = (anchors / d - tail_mean / tail).t();
+      f.row(2) = (1 / d - 1 / tail).t();
+    }
+    for (size_t j = 0; j < count; ++j) {
+      double centered = rules[j].second.first() - traceK;
+      if (!anchors.empty()) {
+        out.col(j) = f * energy_deviation[j];
+        centered -= arma::dot(anchors - tail_mean, energy_deviation[j]);
+      }
+      out(0, j) += g / den * centered;
+      out(1, j) += e / (den * den) * centered;
+      out(2, j) -= g / (den * den) * centered;
+    }
+    return out;
   }
 };
 // Independent Jacobi CG per column; one operator application decodes a feature
@@ -216,7 +266,7 @@ State evaluate(ProbeSet &probes, const mat &x, const vec &y, double g, double e,
   } else {
     sys.emplace(probes.k, g, e, probes.o, audit);
     Projection p(*sys, x);
-    vec b, r = p.project(sys->solve_one(y, "y"), b);
+    vec r = p.fit_response(y, "y").r;
     offset = 2 * arma::accu(arma::log(p.lower.diag())) + arma::dot(y, r);
     if (score) {
       vec kr = probes.k.apply(r);
@@ -236,15 +286,15 @@ State evaluate(ProbeSet &probes, const mat &x, const vec &y, double g, double e,
                          arma::accu(arma::square(invwx))};
     }
   }
-  const bool control = x.n_rows <= 512;
+  mat controls = probes.controls(g, e, count);
   double delta = 0;
-  double km = probes.traceK / x.n_rows, anchor = g * km + e;
+
   for (size_t j = 0; j < count; ++j) {
     auto &q = probes.rules[j];
     double fine = q.second.logdet(g, e);
     delta += fine - q.first.logdet(g, e);
-    double centered = q.second.first() - probes.traceK;
-    s.lik[j] = -.5 * (fine - (control ? g / anchor * centered : 0) + offset);
+
+    s.lik[j] = -.5 * (fine - controls(0, j) + offset);
   }
   s.depth = std::max(s.depth, std::abs(delta) / (count * x.n_rows));
   audit.depth_error = std::max(audit.depth_error, s.depth);
@@ -259,11 +309,11 @@ State evaluate(ProbeSet &probes, const mat &x, const vec &y, double g, double e,
     for (size_t j = 0; j < count; ++j) {
       const auto &q = probes.rules[j].second;
       vec inv = 1 / (g * q.nodes + e);
-      double cv = control ? q.first() - probes.traceK : 0;
+
       s.samples(0, j) = arma::dot(q.weights, q.nodes % inv) -
-                        rank_correction[0] - e * cv / (anchor * anchor);
-      s.samples(1, j) = arma::dot(q.weights, inv) - rank_correction[1] +
-                        g * cv / (anchor * anchor);
+                        rank_correction[0] - controls(1, j);
+      s.samples(1, j) =
+          arma::dot(q.weights, inv) - rank_correction[1] - controls(2, j);
     }
   } else
     for (size_t i = 0; i < count; i += probes.o.batch) {
@@ -276,12 +326,11 @@ State evaluate(ProbeSet &probes, const mat &x, const vec &y, double g, double e,
       for (size_t j = 0; j < width; ++j) {
         // z' V^-1 D_i z minus tr(C^-1 W' D_i W) is Hutchinson on PD_i
         // with the stochastic fixed-effect term replaced by its exact mean.
-        double cv =
-            control ? probes.rules[i + j].second.first() - probes.traceK : 0;
+
         s.samples(0, i + j) = arma::dot(h.col(j), kz.col(j)) -
-                              rank_correction[0] - e * cv / (anchor * anchor);
+                              rank_correction[0] - controls(1, i + j);
         s.samples(1, i + j) = arma::dot(h.col(j), z.col(j)) -
-                              rank_correction[1] + g * cv / (anchor * anchor);
+                              rank_correction[1] - controls(2, i + j);
       }
     }
   vec traces = arma::mean(s.samples, 1);
@@ -307,14 +356,20 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
   double design_logdet;
   double sign;
   arma::log_det(design_logdet, sign, x.t() * x);
-  auto more = [&] {
-    require(count < o.max_probes,
-            "stochastic precision insufficient: probe budget exhausted");
-    count = std::min(2 * count, o.max_probes);
-    a.logratio_se = 0;
-  };
+  // At g=0 the inward score has an exact linear-time trace even in
+  // stochastic mode. Avoid a multiplicative EM approach to zero forever.
+  mat qx, rx;
+  require(arma::qr_econ(qx, rx, x), "fixed design QR failed");
+  vec residual = y - x * ols;
+  mat kq = k.apply(qx);
+  vec ky = k.apply(residual);
+  a.matvec += qx.n_cols + 1;
+  double zero_score = .5 * (arma::dot(residual, ky) / (scale * scale) -
+                            (probes.traceK - arma::accu(qx % kq)) / scale);
+  double zero_lik = -.5 * df * (std::log(scale) + 1);
   int it = 0;
   while (it <= o.max_reml) {
+    a.updates = it;
     a.probes = count;
     auto cur = evaluate(probes, x, y, g, e, count, true);
     double lik = arma::mean(cur.lik) + .5 * design_logdet;
@@ -324,6 +379,15 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
               " probes=" + std::to_string(count));
     bool boundary_g = g == 0, boundary_e = e <= floor;
     vec se = .5 * vec{a.trace_se_g, a.trace_se_e} % units / df / 1.;
+    if (zero_score * units[0] / df < -o.score_tol && cur.score[0] < 0 &&
+        zero_lik >=
+            lik + 1.96 * arma::stddev(cur.lik) / std::sqrt(double(count))) {
+      a.steps.push_back({it, 0, g, e, lik, cur.score[0], cur.score[1], 0, 0,
+                         "active-set", count, a.paired_se, cur.depth});
+      a.steps.push_back({it + 1, 0, 0, scale, zero_lik, zero_score, 0, 0, 0,
+                         "genetic-zero", count, 0, 0});
+      return {0, scale, zero_lik, "genetic-zero"};
+    }
     bool converged = true;
     for (size_t j = 0; j < 2; ++j) {
       if ((j == 0 && boundary_g) || (j == 1 && boundary_e)) {
@@ -331,6 +395,14 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
       } else
         converged &= std::abs(scaled[j]) <= o.score_tol;
     }
+    auto more = [&] {
+      a.steps.push_back({it, 0, g, e, lik, cur.score[0], cur.score[1], 0, 0,
+                         "increase-probes", count, a.paired_se, cur.depth});
+      require(count < o.max_probes,
+              "stochastic precision insufficient: probe budget exhausted");
+      count = std::min(2 * count, o.max_probes);
+      a.logratio_se = 0;
+    };
     double condition = 0;
     vec delta;
     if (o.varcomp == "ai-reml") {
@@ -408,15 +480,15 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
       string status = boundary_g   ? "approx-genetic-zero"
                       : boundary_e ? "approx-residual-floor"
                                    : "approx-interior";
-      a.steps.push_back(
-          {it, 0, g, e, lik, cur.score[0], cur.score[1], 0, condition, status});
+      a.steps.push_back({it, 0, g, e, lik, cur.score[0], cur.score[1], 0,
+                         condition, status, count, a.paired_se, cur.depth});
       return {g, e, lik, status};
     }
     require(it < o.max_reml, "stochastic REML iteration-limit");
     double step = 1;
     bool resample = false;
     int bt = 0;
-    for (; bt < 40; ++bt, step *= .5) {
+    for (; bt <= o.max_backtracks; ++bt, step *= .5) {
       double ng = std::max(0., g + step * delta[0]),
              ne = std::max(floor, e + step * delta[1]);
       if (!std::isfinite(ng + ne))
@@ -435,9 +507,11 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
           resample = true;
           break;
         }
-        if (it % o.log_every == 0)
+        if (it % o.record_every == 0)
           a.steps.push_back({it, bt, g, e, lik, cur.score[0], cur.score[1],
-                             step, condition, "approx-update"});
+                             step, condition,
+                             bt ? "approx-damped-update" : "approx-update",
+                             count, a.paired_se, cur.depth});
         g = ng;
         e = ne;
         ++it;
@@ -446,7 +520,7 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
     }
     if (resample)
       continue;
-    require(bt < 40, "stochastic backtracking failed");
+    require(bt <= o.max_backtracks, "stochastic backtracking failed");
   }
   throw std::runtime_error("stochastic REML iteration-limit");
 }

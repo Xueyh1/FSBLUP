@@ -1,26 +1,44 @@
 #include "linear.hpp"
 namespace fsb {
+double solver_workspace(size_t n, size_t targets, size_t p,
+                        const FitOptions &o) {
+  double work = 8. * n * (14 + 4. * p) + 16. * targets * p;
+  if (o.preconditioner == "nystrom")
+    work += 48. * n * std::min(double(n), double(o.rank));
+  if (o.trace == "hutchinson") {
+    double basis = o.full_reorth ? std::min(double(n), 2. * o.slq_depth) : 5.;
+    work += 8. * n *
+                (basis + 12. * o.batch +
+                 5. * std::min(double(n), double(o.trace_rank))) +
+            o.max_probes * (96. * o.slq_depth + 8. * o.trace_rank + 128.);
+  }
+  if (o.solver == "direct" || (o.trace == "exact" && o.varcomp != "fixed"))
+    work += 160. * n * n;
+  return work;
+}
 Model fit_operator(const TrainKernel &input, const mat &xt, const mat &x,
                    const vec &y, const FitOptions &o, FitAudit &audit) {
+  string context = std::move(audit.context);
+  audit = {};
+  audit.context = std::move(context);
   audit.n = y.n_elem;
   size_t n = y.n_elem, p = x.n_cols;
   require(xt.n_rows == n && xt.n_cols == p && n > p && p && arma::rank(xt) == p,
           "training design rank deficient or no residual degrees of freedom");
   require(y.is_finite() && xt.is_finite() && x.is_finite(),
           "nonfinite training phenotype or design");
-  double work = 8. * y.n_elem * (14 + 4. * x.n_cols) + 16. * x.n_elem;
-  if (o.preconditioner == "nystrom")
-    work += 48. * y.n_elem * std::min(double(y.n_elem), double(o.rank));
-  if (o.trace == "hutchinson")
-    work += 8. * y.n_elem *
-                (std::min(double(y.n_elem), 2. * o.slq_depth) + 12. * o.batch) +
-            o.max_probes * (96. * o.slq_depth + 64.);
-  if (o.solver == "direct" || (o.trace == "exact" && o.varcomp != "fixed"))
-    work += 160. * y.n_elem * y.n_elem;
-  require(work / 1048576. < o.memory_mb,
-          "training solver workspace exceeds --memory-mb");
+  double work = solver_workspace(n, x.n_rows, p, o);
+  if (work / 1048576. >= o.memory_mb)
+    throw std::runtime_error("training solver needs " +
+                             std::to_string(work / 1048576.) +
+                             " MiB, exceeding --memory-mb; use fixed PCG or an "
+                             "operator with Hutchinson traces");
   audit.workspace_mib = work / 1048576.;
   TrainKernel kernel = input;
+  kernel.dense = [fn = input.dense, cost = input.dense_column_cost, &audit] {
+    audit.matvec += cost;
+    return fn();
+  };
   kernel.apply = [fn = input.apply, &audit](const mat &v) {
     auto start = std::chrono::steady_clock::now();
     mat res = fn(v);
@@ -48,6 +66,7 @@ Model fit_operator(const TrainKernel &input, const mat &xt, const mat &x,
     uvec keep = arma::find(d > arma::datum::eps * m * d.max());
     mat f = cols * q.cols(keep);
     f.each_row() /= arma::sqrt(d.elem(keep)).t();
+    audit.prec_rank = keep.n_elem;
     kernel.low_rank = std::make_shared<mat>(std::move(f));
     audit.prec_seconds +=
         std::chrono::duration<double>(std::chrono::steady_clock::now() - tick)
@@ -81,6 +100,8 @@ Model fit_operator(const TrainKernel &input, const mat &xt, const mat &x,
     double e0 = o.initial_e ? std::scalbn(o.initial_e, -2 * exponent) : v / 2;
     require(g0 > 0 && e0 > 0 && std::isfinite(g0 + e0),
             "invalid initial variances");
+    audit.initial_vu = std::scalbn(g0, 2 * exponent);
+    audit.initial_ve = std::scalbn(e0, 2 * exponent);
     Estimates est;
     if (o.trace == "hutchinson")
       est = estimate_stochastic(kernel, xt, yt, g0, e0, o, audit);
@@ -110,31 +131,16 @@ Model fit_operator(const TrainKernel &input, const mat &xt, const mat &x,
   stage = std::chrono::steady_clock::now();
   System sys(kernel, g, e, o, audit);
   Projection P(sys, xt);
-  vec b, r = P.project(sys.solve_one(yt, "y"), b), res = yt - xt * b;
-  auto check = [&] {
-    audit.projected_residual =
-        arma::norm(sys.apply(r) - res) / (o.atol + o.rtol * arma::norm(res));
-    audit.orthogonality =
-        arma::norm(xt.t() * r) /
-        (o.atol + o.rtol * arma::norm(xt, "fro") * arma::norm(r));
-    return audit.projected_residual <= 1 && audit.orthogonality <= 1;
-  };
-  if (!check()) {
-    r = sys.solve_one(res, "centered");
-    vec correction = P.small(xt.t() * r);
-    b += correction;
-    r -= P.w * correction;
-    res = yt - xt * b;
-    require(check(),
-            "projected residual or orthogonality failed after centering");
-  }
+  auto [b, r, res] = P.fit_response(yt, "y");
   audit.gls_seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - stage)
           .count();
   stage = std::chrono::steady_clock::now();
   vec u(x.n_rows, arma::fill::zeros);
-  if (g > 0)
+  if (g > 0) {
     u = g * kernel.cross(r);
+    ++audit.cross_rhs;
+  }
   if (o.varcomp == "fixed") {
     g = arma::dot(res, r) / (n - p);
     e = o.lambda * g;
@@ -179,6 +185,7 @@ Model fit_dense(const mat &k, const uvec &ids, const mat &x, const vec &y,
     if (o.solver == "direct") {
       a.n = t.n_elem;
       a.status = m.status;
+      a.final_lik = -.5 * (m.objective + (t.n_elem - x.n_cols));
       return m;
     }
     FitOptions fixed = o;
@@ -188,6 +195,7 @@ Model fit_dense(const mat &k, const uvec &ids, const mat &x, const vec &y,
     result.objective = m.objective;
     result.status = m.status;
     a.status = m.status;
+    a.final_lik = -.5 * (m.objective + (t.n_elem - x.n_cols));
     return result;
   }
   uvec gt = ids.elem(t);

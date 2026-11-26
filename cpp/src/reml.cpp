@@ -16,13 +16,17 @@ Derivatives reml_derivatives(const Contrast &c, double g, double e) {
 }
 Estimates estimate_exact(const Contrast &c, size_t n, double g, double e,
                          const FitOptions &o, FitAudit &audit) {
+  auto evaluate = [&](double a, double b) {
+    ++audit.trials;
+    return reml_derivatives(c, a, b);
+  };
   size_t df = c.z.n_elem;
   double scale = arma::mean(arma::square(c.z)), km = arma::mean(c.eigen);
   require(scale > 0 && std::isfinite(scale),
           "constant response or exact fixed-effect fit");
   if (c.eigen.max() - c.eigen.min() <= 1e-12 * std::max(1., c.eigen.max())) {
     g = e = scale / (1 + km);
-    auto d = reml_derivatives(c, g, e);
+    auto d = evaluate(g, e);
     audit.steps.push_back(
         {0, 0, g, e, d.lik, d.score[0], d.score[1], 0, 0, "unidentifiable"});
     return {g, e, d.lik, "unidentifiable;lambda=1"};
@@ -32,7 +36,7 @@ Estimates estimate_exact(const Contrast &c, size_t n, double g, double e,
   // score.
   std::vector<Estimates> boundary;
   auto face = [&](double a, double b, int inward, std::string name) {
-    auto d = reml_derivatives(c, a, b);
+    auto d = evaluate(a, b);
     if (d.score[inward] * units[inward] / df <= o.score_tol)
       boundary.push_back({a, b, d.lik, name});
   };
@@ -50,40 +54,50 @@ Estimates estimate_exact(const Contrast &c, size_t n, double g, double e,
     for (int j = -36; j <= 36; ++j) {
       double ratio = std::exp(double(j) / 2),
              a = arma::mean(arma::square(c.z) / (c.eigen + ratio));
-      interior_bound =
-          std::max(interior_bound, reml_derivatives(c, a, a * ratio).lik);
+      interior_bound = std::max(interior_bound, evaluate(a, a * ratio).lik);
     }
   double previous = -INFINITY;
   for (int it = 0; it <= o.max_reml; ++it) {
-    auto d = reml_derivatives(c, g, e);
+    audit.updates = it;
+    auto d = evaluate(g, e);
     vec s = d.score % units;
     double scaled = arma::abs(s).max() / df;
     auto record = [&](std::string status, double step, int bt,
                       double condition) {
-      if (it == 0 || it % o.log_every == 0 || status != "update") {
+      if (it == 0 || it % o.record_every == 0 || status != "update") {
         audit.steps.push_back({it, bt, g, e, d.lik, d.score[0], d.score[1],
                                step, condition, status});
-        if (o.event)
-          o.event(audit.context + " reml=" + std::to_string(it) +
-                  " status=" + status + " score=" + std::to_string(scaled));
       }
+      if (o.event && (it % o.log_every == 0 || status != "update"))
+        o.event(audit.context + " reml=" + std::to_string(it) +
+                " status=" + status + " score=" + std::to_string(scaled));
+    };
+    auto accept_face = [&]() {
+      audit.updates = it + 1;
+      auto b = best_face();
+      auto f = evaluate(b.g, b.e);
+      audit.steps.push_back(
+          {it + 1, 0, b.g, b.e, b.lik, f.score[0], f.score[1], 0, 0, b.status});
+      return b;
     };
     if (scaled <= o.score_tol &&
         (it == 0 ||
          std::abs(d.lik - previous) <= o.score_tol * (1 + std::abs(d.lik)))) {
       record("interior", 0, 0, 0);
       if (!boundary.empty() && best_face().lik > d.lik + 1e-10)
-        return best_face();
+        return accept_face();
       return {g, e, d.lik, "interior"};
     }
     // KKT-certified face with higher likelihood than the current iterate.
     // Accept only when the score points out of the positive quadrant.
     if (!boundary.empty()) {
       auto b = best_face();
-      if (b.lik >= interior_bound - 1e-12 && b.lik >= d.lik &&
+      if (b.lik >= interior_bound - 1e-12 &&
+          b.lik >= d.lik - 64 * arma::datum::eps * (1 + std::abs(d.lik)) &&
           ((b.g == 0 && d.score[0] < 0) || (b.e == 0 && d.score[1] < 0))) {
+        audit.updates = it + 1;
         record("active-set", 0, 0, 0);
-        auto f = reml_derivatives(c, b.g, b.e);
+        auto f = evaluate(b.g, b.e);
         audit.steps.push_back({it + 1, 0, b.g, b.e, f.lik, f.score[0],
                                f.score[1], 0, 0, b.status});
         return b;
@@ -103,7 +117,7 @@ Estimates estimate_exact(const Contrast &c, size_t n, double g, double e,
       if (condition < 1e-14 ||
           !arma::solve(delta, ai, s, arma::solve_opts::no_approx)) {
         if (!boundary.empty() && best_face().lik >= d.lik)
-          return best_face();
+          return accept_face();
         throw std::runtime_error("ai-reml singular average information");
       }
       delta %= units;
@@ -124,18 +138,18 @@ Estimates estimate_exact(const Contrast &c, size_t n, double g, double e,
     }
     double step = 1;
     int bt = 0;
-    for (; bt < 55; ++bt, step *= .5) {
+    for (; bt <= o.max_backtracks; ++bt, step *= .5) {
       double ng = g + step * delta[0], ne = e + step * delta[1];
       if (ng >= 0 && ne >= 0 && ng + ne > 0 && (ne > 0 || c.eigen.min() > 0) &&
           std::isfinite(ng + ne)) {
-        auto trial = reml_derivatives(c, ng, ne);
+        auto trial = evaluate(ng, ne);
         if (trial.lik >= d.lik - 32 * arma::datum::eps * (1 + std::abs(d.lik)))
           break;
       }
       if (o.varcomp == "em-reml")
         throw std::runtime_error("em-reml invalid or nonmonotone update");
     }
-    require(bt < 55, "ai-reml backtracking failed");
+    require(bt <= o.max_backtracks, "ai-reml backtracking failed");
     record("update", step, bt, condition);
     previous = d.lik;
     g += step * delta[0];

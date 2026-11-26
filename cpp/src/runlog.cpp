@@ -32,9 +32,11 @@ RunLog::RunLog(const Options &opt, const string &file, const string &command)
     std::lock_guard<std::mutex> lock(impl->mutex);
     impl->error = msg;
   });
-  info("command=" + command + " stage=start");
+  if(info_enabled())info("command=" + command + " stage=start");
 }
 RunLog::~RunLog() = default;
+bool RunLog::info_enabled()const{return impl->logger->should_log(spdlog::level::info);}
+void RunLog::trace(const string& s){impl->logger->trace("{}",s);}
 void RunLog::info(const string &s) { impl->logger->info("{}", s); }
 void RunLog::debug(const string &s) { impl->logger->debug("{}", s); }
 bool RunLog::debug_enabled() const {

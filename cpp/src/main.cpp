@@ -14,8 +14,8 @@ const char *help = R"(fsblup 0.4.0
   fit: --solver pcg|direct --varcomp ai-reml|em-reml|profile-reml|fixed
        --trace exact|hutchinson --probes N --max-probes N --probe-seed N --slq-depth N --lambda L --preconditioner jacobi|identity|nystrom --pcg-rtol R --pcg-atol A
        --pcg-maxiter N --pcg-rank N --reml-maxiter N --reml-tol T --init-vu G --init-ve E
-  Cache: --cache-backend auto|operator|dense --cache-storage auto|stream
-  Random trace: --probe-solver pcg|lanczos --probe-batch N --mc-tol T --slq-tol T --slq-reorth full|local
+  Cache: --cache-backend auto|operator|dense --cache-storage auto|stream|resident
+  Random trace: --probe-solver pcg|lanczos --probe-batch N --mc-tol T --slq-tol T --slq-reorth full|local --trace-rank R
   Logging: --log-level off|error|warn|info|debug|trace --log-file FILE --log-every N
   All commands accept --threads N (default 1) and --memory-mb N (dense estimate).
   fuse and fit accept --pd-policy strict|nearPD (default strict).
@@ -80,6 +80,12 @@ int main(int argc, char **argv) {
                   "log file conflicts with input " + string(key));
       }
       auto absolute = fs::absolute(log_path).lexically_normal();
+      if (opt.has("cache") && fs::exists(log_path)) {
+        auto rel = fs::weakly_canonical(log_path).lexically_relative(
+            fs::weakly_canonical(opt.get("cache")));
+        require(rel.empty() || *rel.begin() == "..",
+                "log file conflicts with input cache");
+      }
       auto relative = absolute.lexically_relative(
           fs::absolute(dest.dest).lexically_normal());
       if (!relative.empty() && *relative.begin() != "..") {

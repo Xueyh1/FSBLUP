@@ -1,4 +1,6 @@
+#include "cache.hpp"
 #include "core.hpp"
+#include "linear.hpp"
 #include <iostream>
 using namespace fsb;
 void close(double x, double y, double tol) {
@@ -7,6 +9,21 @@ void close(double x, double y, double tol) {
 }
 int main() {
   try {
+    Table ped{{"ID", "Sire", "Dam"},
+              {{"kid", "sib1", "sib2"},
+               {"sib2", "pa", "ma"},
+               {"sib1", "pa", "ma"},
+               {"ma", "0", "0"}}};
+    PedigreeOperator sparse(ped);
+    auto dense =
+        pedigree(ped.column("ID"), ped.column("Sire"), ped.column("Dam"), 2)
+            .subset(sparse.ids);
+    close(arma::abs(
+              sparse.apply(arma::eye(sparse.ids.size(), sparse.ids.size())) -
+              dense.values)
+              .max(),
+          0, 1e-13);
+    close(sparse.diag[positions(sparse.ids, {"kid"})[0]], 1.25, 1e-14);
     mat q = {{1, 1, 1, 1}, {1, -1, 1, -1}, {1, 1, -1, -1}, {1, -1, -1, 1}};
     q /= 2;
     vec ev = {2, 1, 2, 4}, z = {0, std::sqrt(3.), std::sqrt(5.), 3};
@@ -29,6 +46,9 @@ int main() {
           (2 * h);
       close(d.score[j], diff, 1e-9);
     }
+    auto legacy = solve(k, x, y, t);
+    close(legacy.vu, 2, 1e-5);
+    close(legacy.ve, 1, 1e-5);
     for (auto method : {"ai-reml", "em-reml"})
       for (auto solver : {"pcg", "direct"})
         for (double start : {.5, 3.}) {
@@ -66,6 +86,23 @@ int main() {
     o.max_reml = 100;
     auto zero = fit_model(k, x, q.col(1), t, o, a);
     require(zero.vu == 0 && arma::norm(zero.u) == 0, "g=0 KKT");
+    auto e0 = fit_model(k, x, q.col(3), t, o, a);
+    require(e0.ve == 0 && e0.status == "residual-zero", "e=0 KKT");
+    TrainKernel kernel{k.diag(), [&](const mat &b) -> mat { return k * b; },
+                       [&](const mat &b) -> mat { return k * b; },
+                       [&] { return k; }};
+    System sys(kernel, g, e, o, a);
+    Projection proj(sys, x);
+    close(arma::abs(proj.apply_P(y) - P * y).max(), 0, 1e-10);
+    require(arma::norm(sys.solve_one(arma::zeros<vec>(4), "zero")) == 0,
+            "zero RHS");
+    kernel.apply = [](const mat &b) -> mat { return -2 * b; };
+    try {
+      sys.solve_one(y, "negative");
+      throw std::logic_error("missed curvature failure");
+    } catch (const std::runtime_error &ex) {
+      require(string(ex.what()).find("curvature") != string::npos, ex.what());
+    }
     auto flat = fit_model(arma::eye(4, 4), x, y, t, o, a);
     require(flat.status.find("unidentifiable") != string::npos,
             "unidentifiable");

@@ -26,20 +26,21 @@ struct Options {
     else {
       allowed.insert({"A", "G", "O", "alpha", "beta", "pd-policy"});
       if (cmd == "fit")
-        allowed.insert({"cache",          "cache-backend",  "cache-storage",
-                        "pcg-rank",       "pheno",          "id",
-                        "trait",          "folds",          "repeats",
-                        "seed",           "folds-file",     "year",
-                        "ngen",           "metric",         "score-col",
-                        "slq-reorth",     "probe-solver",   "probes",
-                        "max-probes",     "probe-seed",     "slq-depth",
-                        "probe-batch",    "mc-tol",         "slq-tol",
-                        "solver",         "varcomp",        "trace",
-                        "lambda",         "pcg-rtol",       "pcg-atol",
-                        "pcg-maxiter",    "preconditioner", "reml-maxiter",
-                        "reml-tol",       "init-vu",        "init-ve",
-                        "parallel",       "covar",          "factor",
-                        "strict-simplex", "write-k"});
+        allowed.insert({"cache",          "cache-backend", "cache-storage",
+                        "pcg-rank",       "pheno",         "id",
+                        "trait",          "folds",         "repeats",
+                        "seed",           "folds-file",    "year",
+                        "ngen",           "metric",        "score-col",
+                        "trace-rank",     "slq-reorth",    "probe-solver",
+                        "probes",         "max-probes",    "probe-seed",
+                        "slq-depth",      "probe-batch",   "mc-tol",
+                        "slq-tol",        "solver",        "varcomp",
+                        "trace",          "lambda",        "pcg-rtol",
+                        "pcg-atol",       "pcg-maxiter",   "preconditioner",
+                        "max-backtracks", "reml-maxiter",  "reml-tol",
+                        "init-vu",        "init-ve",       "parallel",
+                        "covar",          "factor",        "strict-simplex",
+                        "write-k"});
       else
         require(cmd == "fuse", "unknown subcommand: " + cmd);
     }
@@ -71,7 +72,7 @@ struct Timing {
     auto now = Clock::now();
     times.emplace_back(stage,
                        std::chrono::duration<double>(now - last).count());
-    if (log)
+    if (log && log->info_enabled())
       log->info("stage=" + stage +
                 " seconds=" + std::to_string(times.back().second));
     last = now;

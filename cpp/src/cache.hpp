@@ -21,7 +21,8 @@ struct FeatureFile {
   mat lookup;
   size_t stride = 0;
   void read(std::ifstream &, size_t rows, double *dest, CacheIO &) const;
-  mat apply(const mat &x, size_t block, CacheIO &io) const;
+  mat apply(const mat &x, size_t block, CacheIO &io,
+            const uvec *subset = nullptr) const;
 };
 struct PopulationKernel {
   Ids ids;
@@ -30,16 +31,19 @@ struct PopulationKernel {
   std::vector<PdBlock> diagnostics;
   std::function<std::function<mat(const mat &)>(const uvec &, double)>
       train_apply;
-  TrainKernel restrict(const Ids &targets, const uvec &train, double cap) const;
+  double retained_mib = 0;
+  TrainKernel restrict(const Ids &targets, const uvec &train, double cap,
+                       double solver_mib = 0) const;
 };
 struct Cache {
   PedigreeOperator ped;
   FeatureFile g, o;
   CacheIO io;
   uint64_t verified_bytes = 0;
-  bool streaming = false;
+  bool streaming = false, resident = false;
   explicit Cache(const fs::path &, double cap);
-  string mode() const;
+  string coverage;
+  const string &mode() const { return coverage; }
   Layers materialize(double cap);
   PopulationKernel prepare(const Ids &population, double a, double b,
                            PdPolicy policy, double cap);

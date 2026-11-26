@@ -426,20 +426,39 @@ void FeatureFile::read(std::ifstream &f, size_t rows, double *dest,
                            std::memory_order_relaxed);
   }
 }
-mat FeatureFile::apply(const mat &x, size_t block, CacheIO &io) const {
+mat FeatureFile::apply(const mat &x, size_t block, CacheIO &io,
+                       const uvec *subset) const {
   std::ifstream f(path, std::ios::binary);
-  require(bool(f), "unreadable cache block");
+  require(bool(f), "unreadable feature cache");
   mat coeff(columns, x.n_cols, arma::fill::zeros), result(x.n_rows, x.n_cols);
+  // A scattered training vector can have very few nonzero rows. Only those
+  // rows contribute to W'v. The cross pass still returns every target row.
+  uvec nz = arma::find(arma::any(x != 0, 1));
   for (int pass = 0; pass < 2; ++pass) {
-    f.seekg(0);
-    for (size_t i = 0; i < x.n_rows; i += block) {
-      size_t len = std::min(block, size_t(x.n_rows) - i);
+    const bool sparse = pass == 0 && nz.n_elem < x.n_rows / 4;
+    const size_t count = sparse ? nz.n_elem : x.n_rows;
+    for (size_t first = 0; first < count; first += block) {
+      size_t len = std::min(block, count - first);
+      auto source = [&](size_t i) {
+        auto j = sparse ? nz[first + i] : first + i;
+        return subset ? (*subset)[j] : j;
+      };
       mat w(columns, len, arma::fill::none);
-      read(f, len, w.memptr(), io);
-      if (pass == 0)
-        coeff += w * x.rows(i, i + len - 1);
+      for (size_t j = 0; j < len;) {
+        size_t end = j + 1;
+        auto start = source(j);
+        while (end < len && source(end) == start + end - j)
+          ++end;
+        f.seekg(start * stride);
+        read(f, end - j, w.colptr(j), io);
+        j = end;
+      }
+      if (pass == 1)
+        result.rows(first, first + len - 1) = w.t() * coeff;
+      else if (sparse)
+        coeff += w * x.rows(nz.subvec(first, first + len - 1));
       else
-        result.rows(i, i + len - 1) = w.t() * coeff;
+        coeff += w * x.rows(first, first + len - 1);
     }
   }
   return result;
@@ -487,11 +506,9 @@ void prepare_cache(const fs::path &pedigree, const fs::path &snp,
 Cache::Cache(const fs::path &dir, double cap)
     : ped(read_table(validate(dir, cap))), g(load_features(dir, "G")),
       o(load_features(dir, "O")) {
+  coverage = Layers{{ped.ids, {}}, {g.ids, {}}, {o.ids, {}}}.mode();
   for (auto &name : files)
     verified_bytes += fs::file_size(dir / name);
-}
-string Cache::mode() const {
-  return Layers{{ped.ids, {}}, {g.ids, {}}, {o.ids, {}}}.mode();
 }
 Layers Cache::materialize(double cap) {
   budget(ped.ids.size(), std::max(g.columns, o.columns), cap);
@@ -512,11 +529,12 @@ Apply subset_apply(size_t whole, uvec ix, Apply apply) {
   };
 }
 Apply feature_training(const FeatureFile &f, const uvec &ix, size_t block,
-                       double cap, bool stream, CacheIO &io) {
-  if (stream || double(ix.n_elem) * f.columns * 8 > cap * 1048576. / 8)
-    return subset_apply(f.ids.size(), ix, [&f, block, &io](const mat &x) {
-      return f.apply(x, block, io);
-    });
+                       double cap, bool stream, bool resident, CacheIO &io) {
+  if (stream ||
+      (!resident && double(ix.n_elem) * f.columns * 8 > cap * 1048576. / 8))
+    return [&f, ix, block, &io](const mat &x) {
+      return f.apply(x, block, io, &ix);
+    };
   auto packed = std::make_shared<mat>(f.columns, ix.n_elem);
   std::ifstream in(f.path, std::ios::binary);
   require(bool(in), "cannot open feature cache");
@@ -526,8 +544,10 @@ Apply feature_training(const FeatureFile &f, const uvec &ix, size_t block,
     f.read(in, 1, packed->colptr(j), io);
   }
 
-  return
-      [packed](const mat &x) -> mat { return packed->t() * ((*packed) * x); };
+  return [packed](const mat &x) -> mat {
+    mat coefficients = (*packed) * x;
+    return packed->t() * coefficients;
+  };
 }
 mat columns(const Apply &apply, size_t n, const uvec &idx, size_t batch) {
   mat result(n, idx.n_elem);
@@ -547,10 +567,13 @@ void check_space(double bytes, double cap, const string &purpose) {
 }
 } // namespace
 TrainKernel PopulationKernel::restrict(const Ids &targets, const uvec &train,
-                                       double cap) const {
+                                       double cap, double solver_mib) const {
+  cap -= retained_mib;
+  require(cap > solver_mib,
+          "training and feature workspaces exceed --memory-mb");
   uvec ix = positions(ids, targets), tr = ix.elem(train);
-  auto training =
-      train_apply ? train_apply(tr, cap) : subset_apply(ids.size(), tr, apply);
+  auto training = train_apply ? train_apply(tr, cap - solver_mib)
+                              : subset_apply(ids.size(), tr, apply);
   auto cross = [fn = apply, ix, tr, n = ids.size()](const mat &x) -> mat {
     mat z(n, x.n_cols, arma::fill::zeros);
     z.rows(tr) = x;
@@ -569,7 +592,8 @@ TrainKernel PopulationKernel::restrict(const Ids &targets, const uvec &train,
   Ids keys;
   for (auto i : train)
     keys.push_back(targets[i]);
-  return {diagonal.elem(tr), training, cross, dense, std::move(keys)};
+  return {diagonal.elem(tr), training, cross,       dense,
+          std::move(keys),   nullptr,  train.n_elem};
 }
 PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
                                 PdPolicy policy, double cap) {
@@ -584,22 +608,24 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
   auto finish = [&](vec diagonal, Apply raw,
                     std::vector<PdBlock> pd = std::vector<PdBlock>{{"K"}}) {
     auto immutable = std::make_shared<const Apply>(std::move(raw));
-    return PopulationKernel{
+    PopulationKernel result{
         pop, diagonal + 1e-6,
         [immutable](const mat &x) -> mat { return (*immutable)(x) + 1e-6 * x; },
         std::move(pd)};
+    result.retained_mib = (320. * whole + 128. * n + 64. * m) / 1048576.;
+    return result;
   };
   if (mode_name == "B" && b == 0)
     return finish(ad, ap);
   Ids gids = intersect(pop, g.ids), oids = intersect(pop, o.ids);
   require(!oids.empty(), "reference coverage degenerates: no omics");
   auto pg = positions(g.ids, gids), po = positions(o.ids, oids);
-  Apply gp = subset_apply(g.ids.size(), pg, [this, block](const mat &x) {
-    return g.apply(x, block, io);
-  });
-  Apply op = subset_apply(o.ids.size(), po, [this, block](const mat &x) {
-    return o.apply(x, block, io);
-  });
+  Apply gp = [this, pg, block](const mat &x) {
+    return g.apply(x, block, io, &pg);
+  };
+  Apply op = [this, po, block](const mat &x) {
+    return o.apply(x, block, io, &po);
+  };
   vec gd = g.diag.elem(pg), od = o.diag.elem(po);
   if (mode_name == "A") {
     require(a >= 0 && b >= 0 && a + b <= 1,
@@ -617,13 +643,25 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
                          });
     result.train_apply = [this, pa, pg, po, a, b,
                           block](const uvec &tr, double limit) -> Apply {
+      if (resident) {
+        const double stored =
+            8. * tr.n_elem *
+            ((b != 0 ? g.columns : 0) + (a != 0 ? o.columns : 0));
+        const double temporary = 16. * block * std::max(g.columns, o.columns) +
+                                 320. * pa.n_elem +
+                                 64. * std::max(g.columns, o.columns);
+        check_space(stored + temporary, limit,
+                    "resident training features and cross workspace");
+      }
       Apply A, G, O;
       if (1 - a - b != 0)
         A = ped.restricted(pa.elem(tr));
       if (b != 0)
-        G = feature_training(g, pg.elem(tr), block, limit, streaming, io);
+        G = feature_training(g, pg.elem(tr), block, limit, streaming, resident,
+                             io);
       if (a != 0)
-        O = feature_training(o, po.elem(tr), block, limit, streaming, io);
+        O = feature_training(o, po.elem(tr), block, limit, streaming, resident,
+                             io);
       return [a, b, A, G, O](const mat &v) -> mat {
         mat y = 1e-6 * v;
         if (A)
@@ -675,18 +713,21 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
     hd.elem(s) = t.diag();
     double scale = arma::mean(hd);
     require(scale > 0, "nonpositive BB000 scale");
-    return finish((1 - b) * ad + b * hd / scale,
-                  [ap, gp, s, u, reg = std::move(reg), t = std::move(t),
-                   delta = std::move(delta), b, scale](const mat &x) -> mat {
-                    mat xu = x;
-                    xu.rows(s).zeros();
-                    mat h = gp(xu);
-                    mat v = reg.t() * x.rows(u);
-                    h.rows(u) += reg * (delta * v + t * x.rows(s));
-                    h.rows(s) = t * (v + x.rows(s));
-                    return (1 - b) * ap(x) + (b / scale) * h;
-                  },
-                  {{"Gss"}, {"K"}});
+    auto result =
+        finish((1 - b) * ad + b * hd / scale,
+               [ap, gp, s, u, reg = std::move(reg), t = std::move(t),
+                delta = std::move(delta), b, scale](const mat &x) -> mat {
+                 mat xu = x;
+                 xu.rows(s).zeros();
+                 mat h = gp(xu);
+                 mat v = reg.t() * x.rows(u);
+                 h.rows(u) += reg * (delta * v + t * x.rows(s));
+                 h.rows(s) = t * (v + x.rows(s));
+                 return (1 - b) * ap(x) + (b / scale) * h;
+               },
+               {{"Gss"}, {"K"}});
+    result.retained_mib += (8. * n * ns + 24. * ns * ns) / 1048576.;
+    return result;
   }
   // Pedigree-only connected components have zero A cross-covariance with
   // every measured individual. Equation 3 leaves those components equal to A.
@@ -754,6 +795,7 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
         return v;
       },
       std::move(fusion.pd_blocks));
+  result.retained_mib += 8. * na * na / 1048576.;
   result.train_apply = [this, pa, ia, delta](const uvec &tr, double) -> Apply {
     auto aop = ped.restricted(pa.elem(tr));
     std::map<size_t, size_t> local;

@@ -46,6 +46,12 @@ bwrap --unshare-all --die-with-parent --clearenv --setenv PATH /usr/bin:/bin \
       --metric rmse --strict-simplex --pd-policy nearPD --parallel weights --threads 4 --out /mnt/outer
     awk -F "\t" '\''NR==2 && $2==0.75 && $3==0.25 {ok=1} END {exit !ok}'\'' /mnt/outer/fusion.tsv
     awk -F "\t" '\''NR==2 && $2==1 && $5==4 {ok=1} END {exit !ok}'\'' /mnt/outer/runtime.tsv
+    bin/fsblup prepare --ped example/ped.tsv --snp example/snp.tsv --omics example/omics.tsv \
+      --snp-format 2bit --out /mnt/features
+    bin/fsblup fit --cache /mnt/features --pheno example/pheno.tsv --trait trait --id ID \
+      --covar age --factor herd --alpha .2 --beta .5 --varcomp em-reml --trace exact --out /mnt/cache-em
+    awk -F "\t" '\''NR==2 && ($1-0.604754055)^2<1e-10 && ($2-0.837449262)^2<1e-10 {ok=1} END {exit !ok}'\'' /mnt/cache-em/model.tsv
+    cat /mnt/cache-em/model.tsv
     cat /mnt/outer/runtime.tsv /mnt/outer/fusion.tsv
     cat /mnt/projected/pd.tsv
     cat /mnt/fit/model.tsv /mnt/tuned/tuning.tsv

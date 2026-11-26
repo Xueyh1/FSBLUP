@@ -1,6 +1,6 @@
 """Official mode C 178/20 verification, with a separate fixed-ratio GLS oracle."""
 
-import csv, json, os, subprocess, sys
+import os, subprocess, sys
 from pathlib import Path
 import numpy as np
 import pandas as pd

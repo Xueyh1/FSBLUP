@@ -37,6 +37,10 @@ void exercise(const Layers &layers, const fs::path &path) {
   uvec train = {0, 1, 2, 3, 4, 5, 6};
   auto m = fit_model(testk, design, testy, train, pcg, audit);
   require(m.u.is_finite(), "repeated PCG");
+  FitOptions exact;
+  FitAudit derived;
+  auto fitted = fit_model(testk, design, testy, train, exact, derived);
+  require(fitted.u.is_finite() && !derived.steps.empty(), "repeated AI fit");
   pcg.max_pcg = 1;
   bool failed = false;
   try {

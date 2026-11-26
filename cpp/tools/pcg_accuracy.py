@@ -1,6 +1,6 @@
 """Predeclared interior Monte Carlo checks; seeds fix the input before fitting."""
 
-import csv, json, subprocess, sys
+import subprocess, sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -66,7 +66,7 @@ for n in (32, 96):
                         "--trace",
                         "hutchinson",
                         "--probe-solver",
-                        "lanczos",
+                        sys.argv[3] if len(sys.argv) > 3 else "lanczos",
                         "--probes",
                         "8",
                         "--max-probes",

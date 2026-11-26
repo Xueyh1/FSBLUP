@@ -12,9 +12,9 @@ struct System {
          const FitOptions &o, FitAudit &a)
       : k(kernel), g(genetic), e(noise), opt(o), audit(a),
         diag(g * k.diagonal + e) {
-    require(diag.is_finite() && diag.min() > 0,
-            "nonpositive covariance diagonal");
-    if (opt.preconditioner == "nystrom" && g > 0) {
+    require(diag.is_finite(), "nonfinite covariance diagonal");
+    require(diag.min() > 0, "nonpositive covariance diagonal");
+    if (opt.preconditioner == "nystrom" && g > 0 && !k.low_rank->empty()) {
       auto tick = std::chrono::steady_clock::now();
       mat f = std::sqrt(g) * (*k.low_rank);
       diag -= arma::sum(arma::square(f), 1);
@@ -32,7 +32,7 @@ struct System {
           std::chrono::duration<double>(std::chrono::steady_clock::now() - tick)
               .count();
     }
-    if (opt.solver == "direct") {
+    if (opt.solver == "direct" && g > 0) {
       mat v = g * k.dense();
       v.diag() += e;
       require(arma::chol(lower, v, "lower"), "direct factorization failed");
@@ -50,6 +50,8 @@ struct System {
     return z;
   }
   vec apply(const vec &v) {
+    if (g == 0)
+      return e * v;
     ++audit.matvec;
     return g * k.apply(v) + e * v;
   }
@@ -62,6 +64,7 @@ struct System {
     require(b.is_finite() && std::isfinite(norm), "nonfinite RHS " + rhs);
     vec x(b.n_elem, arma::fill::zeros);
     if (norm == 0) {
+      ++audit.zero_rhs;
       if (opt.event)
         opt.event(audit.context + " rhs=" + rhs + " zero-rhs");
       return x;
@@ -72,7 +75,18 @@ struct System {
       audit.residual_ratio =
           std::max(audit.residual_ratio, arma::norm(r) / tol);
       audit.max_iterations = std::max(audit.max_iterations, size_t(it));
+      if (opt.trace_rhs && opt.event)
+        opt.event(audit.context + " rhs=" + rhs +
+                  " iterations=" + std::to_string(it) +
+                  " true_residual=" + std::to_string(arma::norm(r)));
     };
+    if (g == 0) {
+      x = b / e;
+      vec r = b - e * x;
+      require(verify(r), "boundary system residual failed");
+      success(r, 0);
+      return x;
+    }
     if (opt.solver == "direct") {
       x = arma::solve(arma::trimatu(lower.t()),
                       arma::solve(arma::trimatl(lower), b));
@@ -107,6 +121,7 @@ struct System {
           success(r, it);
           return x;
         }
+        ++audit.residual_restarts;
         require(!stalled, "PCG stagnation rhs=" + rhs);
         require(it < opt.max_pcg,
                 "PCG iteration-limit rhs=" + rhs +
@@ -147,9 +162,38 @@ struct Projection {
     b = small(x.t() * h);
     return h - w * b;
   }
-  vec apply_P(const vec &v) {
-    vec b;
-    return project(sys.solve_one(v, "P"), b);
+  struct Fit {
+    vec b, r, residual;
+  };
+  Fit fit_response(const vec &y, const string &rhs) {
+    vec b, r = project(sys.solve_one(y, rhs), b), res = y - x * b;
+    const auto &o = sys.opt;
+    auto &a = sys.audit;
+    auto ratio = [](double norm, double tol) {
+      return tol > 0 ? norm / tol : (norm == 0 ? 0. : arma::datum::inf);
+    };
+    auto check = [&] {
+      a.projected_residual = ratio(arma::norm(sys.apply(r) - res),
+                                   o.atol + o.rtol * arma::norm(res));
+      a.orthogonality =
+          ratio(arma::norm(x.t() * r),
+                o.atol + o.rtol * arma::norm(x, "fro") * arma::norm(r));
+      return a.projected_residual <= 1 && a.orthogonality <= 1;
+    };
+    if (!check()) {
+      ++a.centered_solves;
+      r = sys.solve_one(res, "centered-" + rhs);
+      vec correction = small(x.t() * r);
+      b += correction;
+      r -= w * correction;
+      res = y - x * b;
+      require(
+          check(),
+          "projected residual or orthogonality failed after centering rhs=" +
+              rhs);
+    }
+    return {std::move(b), std::move(r), std::move(res)};
   }
+  vec apply_P(const vec &v) { return fit_response(v, "P").r; }
 };
 } // namespace fsb

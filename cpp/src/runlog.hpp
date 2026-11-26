@@ -11,6 +11,8 @@ class RunLog {
 public:
   RunLog(const Options &, const std::string &file, const std::string &command);
   ~RunLog();
+  bool info_enabled()const;
+  void trace(const std::string&);
   void info(const std::string &);
   bool debug_enabled() const;
   bool trace_enabled() const;
