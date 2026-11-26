@@ -9,7 +9,17 @@ add_library(fsblup_core STATIC src/io.cpp src/kernels.cpp src/solver.cpp src/sea
 target_include_directories(fsblup_core PUBLIC src ${ARMADILLO_INCLUDE_DIR})
 target_compile_definitions(fsblup_core PUBLIC ARMA_DONT_USE_WRAPPER ARMA_DONT_USE_OPENMP ARMA_DONT_USE_SUPERLU)
 target_link_libraries(fsblup_core PUBLIC ${OPENBLAS_LIBRARY} Threads::Threads)
-add_executable(fsblup src/main.cpp src/commands.cpp)
+# Pinned, bundled headers (including fmt); an offline configure never downloads dependencies.
+set(spdlog_archive "${CMAKE_CURRENT_SOURCE_DIR}/third_party/spdlog-1.15.3.tar.gz")
+file(SHA256 "${spdlog_archive}" spdlog_digest)
+if(NOT spdlog_digest STREQUAL "15a04e69c222eb6c01094b5c7ff8a249b36bb22788d72519646fb85feb267e67")
+  message(FATAL_ERROR "spdlog archive checksum mismatch")
+endif()
+if(NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/spdlog-1.15.3/include/spdlog/logger.h")
+  file(ARCHIVE_EXTRACT INPUT "${spdlog_archive}" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+endif()
+add_executable(fsblup src/main.cpp src/commands.cpp src/runlog.cpp)
+target_include_directories(fsblup PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/spdlog-1.15.3/include")
 target_link_libraries(fsblup PRIVATE fsblup_core)
 set_target_properties(fsblup PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
 # Transitive bundled Fortran/OpenBLAS dependencies use the same relative path.

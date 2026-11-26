@@ -1,5 +1,6 @@
 #pragma once
 #include "core.hpp"
+#include "runlog.hpp"
 #include <chrono>
 #include <fstream>
 #include <iostream>
@@ -18,7 +19,7 @@ struct Options {
   }
   string get(string k, string def) const { return has(k) ? v.at(k) : def; }
   Options(int argc, char **argv, string cmd) {
-    std::set<string> allowed = {"out", "threads", "memory-mb"};
+    std::set<string> allowed = {"out", "threads", "memory-mb","log-file","log-level","log-every"};
     if (cmd == "build")
       allowed.insert({"ped", "snp", "omics", "omics-type"});
     else {
@@ -49,6 +50,7 @@ struct Options {
 };
 using Clock = std::chrono::steady_clock;
 struct Timing {
+  RunLog* log=nullptr;
   Clock::time_point start = Clock::now(), last = start;
   std::vector<std::pair<string, double>> times;
   size_t weight_workers = 1;
