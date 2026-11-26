@@ -1,12 +1,25 @@
 """Predeclared interior Monte Carlo checks; seeds fix the input before fitting."""
 
-import subprocess, sys
+import argparse
+import subprocess
 from pathlib import Path
 import numpy as np
 import pandas as pd
 
-binary = Path(sys.argv[1]).resolve()
-out = Path(sys.argv[2])
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("binary", type=Path)
+parser.add_argument("output", type=Path)
+parser.add_argument(
+    "probe_solver", nargs="?", choices=("pcg", "lanczos"), default="lanczos"
+)
+parser.add_argument(
+    "--family", choices=("heterogeneous", "genotypes"), default="heterogeneous"
+)
+parser.add_argument("--max-probes", type=int, default=4096)
+parser.add_argument("--trace-rank", type=int, default=0)
+args = parser.parse_args()
+binary = args.binary.resolve()
+out = args.output
 out.mkdir(parents=True, exist_ok=False)
 records = []
 for n in (32, 96):
@@ -17,6 +30,10 @@ for n in (32, 96):
         K = np.diag(np.linspace(0.15, 4.5, N)) + 0.12 * 0.6 ** np.abs(
             np.subtract.outer(np.arange(N), np.arange(N))
         )
+        if args.family == "genotypes":
+            Z = rng.binomial(2, 0.4, size=(N, 2 * n)).astype(float)
+            Z -= Z.mean(axis=0)
+            K = Z @ Z.T / (2 * n * 0.48) + 0.2 * np.eye(N)
         # Random contrast signs with prescribed squared amplitudes yield an interior
         # score zero at g=2,e=1, also varying the fitted effects across datasets.
         Q = np.linalg.qr(np.ones((n, 1)), mode="complete")[0][:, 1:]
@@ -66,11 +83,13 @@ for n in (32, 96):
                         "--trace",
                         "hutchinson",
                         "--probe-solver",
-                        sys.argv[3] if len(sys.argv) > 3 else "lanczos",
+                        args.probe_solver,
+                        "--trace-rank",
+                        str(args.trace_rank),
                         "--probes",
                         "8",
                         "--max-probes",
-                        "4096",
+                        str(args.max_probes),
                         "--slq-depth",
                         "24",
                         "--probe-seed",
@@ -84,6 +103,7 @@ for n in (32, 96):
                     text=True,
                 )
                 row = dict(
+                    family=args.family,
                     n=n,
                     seed=seed,
                     probe_seed=probe_seed,
@@ -105,6 +125,7 @@ for n in (32, 96):
                 records.append(row)
                 pd.DataFrame(records).to_csv(out / "samples.tsv", sep="\t", index=False)
 r = pd.DataFrame(records)
+accepted = True
 for name, g in r.groupby("method"):
     q = g[["log_ratio_error", "relative_rmse"]].quantile(0.95)
     print(
@@ -116,6 +137,8 @@ for name, g in r.groupby("method"):
         "p95",
         q.to_dict(),
     )
-    assert (
+    accepted &= (
         not g.log_ratio_error.isna().any() and q.iloc[0] <= 0.05 and q.iloc[1] <= 0.01
     )
+
+assert accepted, "Monte Carlo acceptance gate failed; inspect samples.tsv"

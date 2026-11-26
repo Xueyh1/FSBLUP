@@ -144,6 +144,27 @@ def run(root):
         ],
         "conflicts",
     )
+    tune = [
+        "--cache",
+        root / "cacheA",
+        "--cache-backend",
+        "operator",
+        *model,
+        "--metric",
+        "rmse",
+        "--strict-simplex",
+        "--folds-file",
+        DATA / "folds.tsv",
+    ]
+    serial = invoke(root, "operator-serial", "fit", tune)
+    parallel = invoke(
+        root,
+        "operator-parallel",
+        "fit",
+        [*tune, "--parallel", "weights", "--threads", 4],
+    )
+    for name in ("search.tsv", "predictions.tsv", "folds.tsv"):
+        assert (serial / name).read_bytes() == (parallel / name).read_bytes()
     with (root / "cacheA" / "G.bin").open("ab") as corrupt:
         corrupt.write(b"x")
     invoke(

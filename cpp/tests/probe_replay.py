@@ -120,6 +120,34 @@ with tempfile.TemporaryDirectory() as tmp:
     m0 = rows(root / "pcg" / "model.tsv")[0]
     m1 = rows(root / "lanczos" / "model.tsv")[0]
     assert abs(float(m0["lambda"]) - float(m1["lambda"])) < 1e-5
+    pheno_option = args.index(str(d / "trait.tsv"))
+    perm = root / "permuted.tsv"
+    write(perm, list(reversed(values)))
+    args[pheno_option] = str(perm)
+    alt = run(
+        "permuted",
+        fixed
+        + [
+            "--probe-solver",
+            "lanczos",
+            "--probe-seed",
+            "19",
+            "--trace-rank",
+            "4",
+            "--probes",
+            "16",
+            "--max-probes",
+            "4096",
+            "--mc-tol",
+            ".025",
+        ],
+    )
+    orig = {r["id"]: float(r["u"]) for r in rows(root / "lanczos" / "predictions.tsv")}
+    assert (
+        max(abs(float(r["u"]) - orig[r["id"]]) for r in rows(alt / "predictions.tsv"))
+        < 1e-7
+    )
+    args[pheno_option] = str(d / "trait.tsv")
     for i, r in enumerate(values):
         r["year"] = int(i >= 32)
         if i >= 32:
