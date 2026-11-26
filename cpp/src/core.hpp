@@ -1,6 +1,6 @@
 #pragma once
-#include "near_pd.hpp"
 #include "model.hpp"
+#include "near_pd.hpp"
 #include <armadillo>
 #include <filesystem>
 #include <functional>
@@ -54,7 +54,7 @@ struct BlockAudit {
 enum class PdPolicy { strict, near_pd };
 // Tuning records projection counts and relative changes. Final output also
 // reports the exact minimum eigenvalue of each projected block after rescaling.
-enum class PdDiagnostics { full, tuning };
+enum class PdDiagnostics { full, tuning, certification };
 struct PdBlock {
 
   string block;
@@ -73,7 +73,7 @@ struct Fusion {
 // plan.
 class FusionPlan {
 public:
-  explicit FusionPlan(const Layers &layers);
+  explicit FusionPlan(const Layers &layers, bool nested_subblock = false);
   FusionPlan(Layers &&) = delete;
   Fusion combine(double alpha, double beta, BlockAudit *audit = nullptr,
                  PdPolicy policy = PdPolicy::strict,
@@ -108,10 +108,14 @@ struct Model {
   string status;
 };
 Model solve(const mat &, const mat &, const vec &, const uvec &,
-            double fixed_lambda = 0);
-void residual_spectrum(const mat&,const mat&,const vec&,vec&,vec&);
-Model fit_model(const mat&,const mat&,const vec&,const uvec&,const FitOptions&,FitAudit&);
-Model fit_operator(const TrainKernel&,const mat& xt,const mat& x,const vec& yt,const FitOptions&,FitAudit&);
+            double fixed_lambda = 0, bool variance_only = false);
+void residual_spectrum(const mat &, const mat &, const vec &, vec &, vec &);
+Model fit_dense(const mat &, const uvec &, const mat &, const vec &,
+                const uvec &, const FitOptions &, FitAudit &);
+Model fit_model(const mat &, const mat &, const vec &, const uvec &,
+                const FitOptions &, FitAudit &);
+Model fit_operator(const TrainKernel &, const mat &xt, const mat &x,
+                   const vec &yt, const FitOptions &, FitAudit &);
 struct Fold {
   int repeat, fold;
   uvec train, valid;
@@ -135,7 +139,8 @@ struct Evaluation {
 Evaluation evaluate_weight(const FusionPlan &plan, double a, double b,
                            const mat &x, const vec &y, const vec &truth,
                            const std::vector<Fold> &folds, const string &metric,
-                           PdPolicy policy = PdPolicy::strict,const FitOptions* options=nullptr);
+                           PdPolicy policy = PdPolicy::strict,
+                           const FitOptions *options = nullptr);
 struct Trial {
   string stage;
   double alpha, beta;

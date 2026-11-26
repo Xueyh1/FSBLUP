@@ -1,35 +1,128 @@
-#include "cli.hpp"
 #include "cache.hpp"
+#include "cli.hpp"
 namespace fsb {
 namespace {
-FitOptions fit_options(const Options& opt,Timing& tm){
- FitOptions o;o.solver=opt.get("solver","pcg");o.varcomp=opt.get("varcomp","ai-reml");o.trace=opt.get("trace","exact");
- require(o.solver=="pcg"||o.solver=="direct","unknown solver");
- require(o.varcomp=="ai-reml"||o.varcomp=="em-reml"||o.varcomp=="profile-reml"||o.varcomp=="fixed","unknown varcomp");
- require(o.trace=="exact","trace backend unavailable: "+o.trace);
- require(!opt.has("trace")||o.varcomp=="ai-reml"||o.varcomp=="em-reml","--trace applies to AI/EM");
- require((o.varcomp=="fixed")==opt.has("lambda"),"--varcomp fixed requires --lambda; other estimators estimate lambda");
- if(opt.has("lambda")){o.lambda=number(opt.get("lambda"));require(o.lambda>0,"lambda must be positive");}
- o.rtol=number(opt.get("pcg-rtol","1e-11"));o.atol=number(opt.get("pcg-atol","1e-13"));
- require(o.rtol>0 && o.atol>=0,"invalid PCG tolerances");
- o.max_pcg=integer(opt.get("pcg-maxiter","2000"),1);o.max_reml=integer(opt.get("reml-maxiter",o.varcomp=="em-reml"?"20000":"200"),1);
- o.score_tol=number(opt.get("reml-tol","1e-8"));require(o.score_tol>0,"invalid score tolerance");
- o.preconditioner=opt.get("preconditioner","jacobi");require(o.preconditioner=="jacobi"||o.preconditioner=="identity","unknown preconditioner");
- if(o.solver=="direct")for(auto key:{"pcg-rtol","pcg-atol","pcg-maxiter","preconditioner"})require(!opt.has(key),string("--")+key+" requires PCG");
- if(o.varcomp=="fixed"||o.varcomp=="profile-reml")for(auto key:{"reml-maxiter","reml-tol","init-vu","init-ve"})require(!opt.has(key),string("--")+key+" requires AI/EM");
- require(opt.has("init-vu")==opt.has("init-ve"),"supply both initial variances");
- if(opt.has("init-vu")){o.initial_g=number(opt.get("init-vu"));o.initial_e=number(opt.get("init-ve"));require(o.initial_g>0&&o.initial_e>0,"positive initial variances required");}
- o.log_every=integer(opt.get("log-every","10"),1);
- if(tm.log){tm.log->info("solver="+o.solver+" varcomp="+o.varcomp+" trace="+o.trace);if(tm.log->debug_enabled())o.event=[log=tm.log](const string& s){log->debug(s);};}
- return o;
+FitOptions fit_options(const Options &opt, Timing &tm) {
+  FitOptions o;
+  o.memory_mb = number(opt.get("memory-mb", "8192"));
+  o.solver = opt.get("solver", "pcg");
+  o.varcomp = opt.get("varcomp", "ai-reml");
+  o.trace = opt.get("trace", "exact");
+  require(o.solver == "pcg" || o.solver == "direct", "unknown solver");
+  require(o.varcomp == "ai-reml" || o.varcomp == "em-reml" ||
+              o.varcomp == "profile-reml" || o.varcomp == "fixed",
+          "unknown varcomp");
+  require(o.trace == "exact" || o.trace == "hutchinson",
+          "trace backend unavailable: " + o.trace);
+  require(!opt.has("trace") || o.varcomp == "ai-reml" || o.varcomp == "em-reml",
+          "--trace applies to AI/EM");
+  require(
+      (o.varcomp == "fixed") == opt.has("lambda"),
+      "--varcomp fixed requires --lambda; other estimators estimate lambda");
+  if (opt.has("lambda")) {
+    o.lambda = number(opt.get("lambda"));
+    require(o.lambda >= 0, "lambda must be nonnegative");
+  }
+  o.rtol = number(opt.get("pcg-rtol", "1e-11"));
+  o.atol = number(opt.get("pcg-atol", "1e-13"));
+  require(o.rtol > 0 && o.atol >= 0, "invalid PCG tolerances");
+  o.max_pcg = integer(opt.get("pcg-maxiter", "2000"), 1);
+  o.max_reml = integer(
+      opt.get("reml-maxiter", o.varcomp == "em-reml" ? "20000" : "200"), 1);
+  o.score_tol = number(opt.get("reml-tol", "1e-8"));
+  require(o.score_tol > 0, "invalid score tolerance");
+  o.preconditioner = opt.get("preconditioner", "jacobi");
+  require(o.preconditioner == "jacobi" || o.preconditioner == "identity" ||
+              o.preconditioner == "nystrom",
+          "unknown preconditioner");
+  o.rank = integer(opt.get("pcg-rank", "16"), 1);
+  require(!opt.has("pcg-rank") || o.preconditioner == "nystrom",
+          "--pcg-rank requires nystrom");
+  if (o.solver == "direct")
+    for (auto key : {"pcg-rtol", "pcg-atol", "pcg-maxiter", "preconditioner"})
+      require(!opt.has(key), string("--") + key + " requires PCG");
+  if (o.varcomp == "fixed" || o.varcomp == "profile-reml")
+    for (auto key : {"reml-maxiter", "reml-tol", "init-vu", "init-ve"})
+      require(!opt.has(key), string("--") + key + " requires AI/EM");
+  require(opt.has("init-vu") == opt.has("init-ve"),
+          "supply both initial variances");
+  if (opt.has("init-vu")) {
+    o.initial_g = number(opt.get("init-vu"));
+    o.initial_e = number(opt.get("init-ve"));
+    require(o.initial_g > 0 && o.initial_e > 0,
+            "positive initial variances required");
+  }
+  if (o.trace == "hutchinson") {
+    require(o.solver == "pcg", "Hutchinson requires PCG");
+    string backend = opt.get("probe-solver", "pcg");
+    require(backend == "pcg" || backend == "lanczos", "unknown probe solver");
+    o.probe_lanczos = backend == "lanczos";
+    auto orth = opt.get("slq-reorth", "full");
+    require(orth == "full" || orth == "local",
+            "invalid SLQ reorthogonalization");
+    o.full_reorth = orth == "full";
+    o.probes = integer(opt.get("probes", "16"), 2);
+    o.max_probes = integer(opt.get("max-probes", "256"), o.probes);
+    o.seed = integer(opt.get("probe-seed", "42"), 0);
+    o.slq_depth = integer(opt.get("slq-depth", "12"), 2);
+    o.batch = integer(opt.get("probe-batch", "8"), 1);
+    o.mc_tol = number(opt.get("mc-tol", ".025"));
+    o.slq_tol = number(opt.get("slq-tol", "1e-5"));
+    require(o.mc_tol > 0 && o.slq_tol > 0, "invalid stochastic tolerances");
+  } else
+    for (auto key :
+         {"slq-reorth", "probe-solver", "probes", "max-probes", "probe-seed",
+          "slq-depth", "probe-batch", "mc-tol", "slq-tol"})
+      require(!opt.has(key), string("--") + key + " requires hutchinson");
+  o.log_every = integer(opt.get("log-every", "10"), 1);
+  if (tm.log) {
+    o.trace_rhs = tm.log->trace_enabled();
+    tm.log->info("solver=" + o.solver + " varcomp=" + o.varcomp +
+                 " trace=" + o.trace);
+    if (tm.log->debug_enabled())
+      o.event = [log = tm.log](const string &s) { log->debug(s); };
+  }
+  return o;
 }
-void write_audits(const fs::path& dir,const std::vector<FitAudit>& audits,const FitOptions& o,const string& prefix){
- write_file(dir/(prefix+"pcg_summary.tsv"),[&](std::ostream& f){
- f<<"context\tsolver\tvarcomp\tn_train\trhs\tmatvec\tmax_iterations\tmax_true_residual_over_tolerance\tprojected_residual_over_tolerance\torthogonality_over_tolerance\tstatus\n";
- for(auto& a:audits)f<<a.context<<'\t'<<o.solver<<'\t'<<o.varcomp<<'\t'<<a.n<<'\t'<<a.rhs<<'\t'<<a.matvec<<'\t'<<a.max_iterations<<'\t'<<a.residual_ratio<<'\t'<<a.projected_residual<<'\t'<<a.orthogonality<<'\t'<<a.status<<'\n';});
- write_file(dir/(prefix+"reml_trace.tsv"),[&](std::ostream& f){
- f<<"context\testimator\ttrace\titeration\tVu\tVe\tcontrast_loglik\tscore_g\tscore_e\tstep\tbacktracks\tAI_rcond\tstatus\n";
- for(auto& a:audits)for(auto& r:a.steps)f<<a.context<<'\t'<<o.varcomp<<'\t'<<o.trace<<'\t'<<r.iteration<<'\t'<<r.g<<'\t'<<r.e<<'\t'<<r.lik<<'\t'<<r.sg<<'\t'<<r.se<<'\t'<<r.step<<'\t'<<r.backtracks<<'\t'<<r.condition<<'\t'<<r.status<<'\n';});
+void write_audits(const fs::path &dir, const std::vector<FitAudit> &audits,
+                  const FitOptions &o, const string &prefix) {
+  write_file(dir / (prefix + "pcg_summary.tsv"), [&](std::ostream &f) {
+    f << "context\tsolver\tvarcomp\tn_train\trhs\tmatvec\tmax_iterations\tmax_"
+         "true_residual_over_tolerance\tprojected_residual_over_"
+         "tolerance\torthogonality_over_tolerance\tprobes\tslq_matvec\ttheta_"
+         "evaluations\ttrace_se_g\ttrace_se_e\ttrace_identity_error\tlogdet_"
+         "se\tpaired_lik_se\tslq_depth_delta_per_n\tlogratio_se\tprec_"
+         "seconds\toperator_s\testimation_s\tgls_s\tpredict_s\tvector_"
+         "workspace_mib\tprobe_seed\tprobe_solver\tstatus\n";
+    for (auto &a : audits)
+      f << a.context << '\t' << o.solver << '\t' << o.varcomp << '\t' << a.n
+        << '\t' << a.rhs << '\t' << a.matvec << '\t' << a.max_iterations << '\t'
+        << a.residual_ratio << '\t' << a.projected_residual << '\t'
+        << a.orthogonality << '\t' << a.probes << '\t' << a.slq_matvec << '\t'
+        << a.trials << '\t' << std::scalbn(a.trace_se_g, -2 * a.scale_exponent)
+        << '\t' << std::scalbn(a.trace_se_e, -2 * a.scale_exponent) << '\t'
+        << a.trace_identity_error << '\t' << a.logdet_se << '\t' << a.paired_se
+        << '\t' << a.depth_error << '\t' << a.logratio_se << '\t'
+        << a.prec_seconds << '\t' << a.operator_seconds << '\t'
+        << a.estimation_seconds << '\t' << a.gls_seconds << '\t'
+        << a.predict_seconds << '\t' << a.workspace_mib << '\t' << o.seed
+        << '\t' << (o.probe_lanczos ? "lanczos+pcg-check" : "pcg") << '\t'
+        << a.status << '\n';
+  });
+  write_file(dir / (prefix + "reml_trace.tsv"), [&](std::ostream &f) {
+    f << "context\testimator\ttrace\titeration\tVu\tVe\tcontrast_loglik\tscore_"
+         "g\tscore_e\tstep\tbacktracks\tAI_rcond\tstatus\n";
+    for (auto &a : audits)
+      for (auto &r : a.steps)
+        f << a.context << '\t' << o.varcomp << '\t' << o.trace << '\t'
+          << r.iteration << '\t' << std::scalbn(r.g, 2 * a.scale_exponent)
+          << '\t' << std::scalbn(r.e, 2 * a.scale_exponent) << '\t'
+          << (r.lik -
+              double(a.n - a.fixed_rank) * a.scale_exponent * std::log(2.))
+          << '\t' << std::scalbn(r.sg, -2 * a.scale_exponent) << '\t'
+          << std::scalbn(r.se, -2 * a.scale_exponent) << '\t' << r.step << '\t'
+          << r.backtracks << '\t' << r.condition << '\t' << r.status << '\n';
+  });
 }
 const char *policy_name(PdPolicy policy) {
   return policy == PdPolicy::strict ? "strict" : "nearPD";
@@ -231,7 +324,7 @@ struct Tuning {
 };
 Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
             const Layers &layers, const fs::path &dir, PdPolicy policy,
-            double cap, Timing &tm,const FitOptions& opts,Cache* cache) {
+            double cap, Timing &tm, const FitOptions &opts, Cache *cache) {
   Ids refs;
   for (auto i : p.ref)
     refs.push_back(p.ids[i]);
@@ -246,6 +339,17 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
                         1048576. +
                     1;
     double per = (192. * n * n + 24. * n * p.x.n_cols) / 1048576. + 9;
+    if (cache) {
+      shared = (256. * layers.a.ids.size() + 24. * p.x.n_elem) / 1048576. + 1;
+      per = (std::max(cache->g.columns, cache->o.columns) * 16384. +
+             cache->ped.ids.size() * (256. + 64. * opts.batch) +
+             n * (8. * (2 * opts.slq_depth + p.x.n_cols) + 64. * opts.batch)) /
+                1048576. +
+            9;
+      if (opts.trace == "exact" && opts.varcomp != "fixed" ||
+          opts.solver == "direct")
+        per += 160. * n * n / 1048576.;
+    }
     require(cap >= shared + per,
             "--memory-mb insufficient for one candidate workspace");
     int requested = std::min(15, integer(opt.get("threads", "1"), 1));
@@ -258,7 +362,12 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
     });
   }
   Layers l;
-  if(cache)l={{refs,{}},{refs,{}},{refs,{}}};else l=layers.subset(refs);
+  if (cache)
+    l = {{refs, {}},
+         {intersect(refs, layers.g.ids), {}},
+         {intersect(refs, layers.o.ids), {}}};
+  else
+    l = layers.subset(refs);
   const string mode = layers.mode();
   const bool identifiable =
       !l.o.ids.empty() &&
@@ -298,33 +407,68 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
       summary << f.repeat << '\t' << f.fold << '\t' << f.train.n_elem << '\t'
               << f.valid.n_elem << '\t' << f.reason << '\n';
   });
-  FusionPlan reference(l);
+  std::optional<FusionPlan> reference;
+  if (!cache)
+    reference.emplace(l);
+  FitOptions fold_options = opts;
+  fold_options.ids = &refs;
+  fold_options.memory_mb /= tm.weight_workers;
   auto result = search(
       opt.has("strict-simplex"), metric == "rmse",
       [&](double a, double b) {
-        if(cache){
-          Evaluation ev;ev.scores.resize(folds.size(),NAN);
-          try{
-            require(a>=0 && b>=0 && a+b<=1,"operator covariance certification requires simplex weights");
-            size_t count=0; double sum=0;
-            for(size_t j=0;j<folds.size();++j){
-              const auto& f=folds[j];if(!f.reason.empty())continue;
-              FitAudit& audit=ev.fits.emplace_back();audit.context="alpha="+std::to_string(a)+" beta="+std::to_string(b)+" repeat="+std::to_string(f.repeat)+" fold="+std::to_string(f.fold);
-              auto op=cache->kernel(refs,f.train,a,b,cap/tm.weight_workers);
-              auto m=fit_operator(op,x.rows(f.train),x,y.elem(f.train),opts,audit);
-              ev.scores[j]=score(truth.elem(f.valid),m.u.elem(f.valid),metric);
-              require(std::isfinite(ev.scores[j]),"nonfinite score");sum+=ev.scores[j];++count;
+        if (cache) {
+          Evaluation ev;
+          ev.scores.resize(folds.size(), NAN);
+          try {
+            auto prepared =
+                cache->prepare(refs, a, b, policy, cap / tm.weight_workers);
+            size_t count = 0;
+            double sum = 0;
+            for (size_t j = 0; j < folds.size(); ++j) {
+              const auto &f = folds[j];
+              if (!f.reason.empty())
+                continue;
+              FitAudit &audit = ev.fits.emplace_back();
+              audit.context = "alpha=" + std::to_string(a) +
+                              " beta=" + std::to_string(b) +
+                              " repeat=" + std::to_string(f.repeat) +
+                              " fold=" + std::to_string(f.fold);
+              auto op =
+                  prepared.restrict(refs, f.train, cap / tm.weight_workers);
+              auto m = fit_operator(op, x.rows(f.train), x, y.elem(f.train),
+                                    fold_options, audit);
+              ev.scores[j] =
+                  score(truth.elem(f.valid), m.u.elem(f.valid), metric);
+              require(std::isfinite(ev.scores[j]), "nonfinite score");
+              sum += ev.scores[j];
+              ++count;
             }
-            require(count>0,"no scorable fold");ev.value=sum/count;ev.correction="certified-PSD,jitter=1e-6";
-          }catch(const std::runtime_error& ex){ev.reason=ex.what();if(!ev.fits.empty())ev.fits.back().status=ev.reason;}
+            require(count > 0, "no scorable fold");
+            ev.value = sum / count;
+            ev.correction = "operator,jitter=1e-6";
+            for (auto &block : prepared.diagnostics) {
+              ev.nearpd_blocks += block.projected;
+              ev.max_relative_norm_f =
+                  std::max(ev.max_relative_norm_f, block.relative_norm_f);
+            }
+          } catch (const std::runtime_error &ex) {
+            ev.reason = ex.what();
+            if (!ev.fits.empty()) {
+              ev.reason = ev.fits.back().context + ": " + ev.reason;
+              ev.fits.back().status = ev.reason;
+            }
+          }
           return ev;
         }
-        return evaluate_weight(reference, a, b, x, y, truth, folds, metric,
-                               policy,&opts);
+        return evaluate_weight(*reference, a, b, x, y, truth, folds, metric,
+                               policy, &fold_options);
       },
       tm.weight_workers);
-  std::vector<FitAudit> audits;for(auto& t:result.trials)for(auto& a:t.result.fits)audits.push_back(std::move(a));
-  write_audits(dir,audits,opts,"cv_");
+  std::vector<FitAudit> audits;
+  for (auto &t : result.trials)
+    for (auto &a : t.result.fits)
+      audits.push_back(std::move(a));
+  write_audits(dir, audits, opts, "cv_");
   PdTimes pd;
   double folds_s = 0;
   for (const auto &t : result.trials) {
@@ -345,14 +489,18 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
 // Validate complete-cohort covariance in CV score order. Candidate phenotypes
 // never enter this check; the common case constructs just one full kernel.
 Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
-                     double &alpha, double &beta, PdPolicy policy,bool certified=false) {
+                     double &alpha, double &beta, PdPolicy policy, Cache *cache,
+                     std::optional<PopulationKernel> &selected_operator,
+                     double cap) {
   const auto &result = t.search;
   const auto &trials = result.trials;
   const size_t count = trials.size();
   Ids rejected(count);
   size_t selected = count, failures = 0;
   Fusion kernel;
-  FusionPlan full(layers);
+  std::optional<FusionPlan> full;
+  if (!cache)
+    full.emplace(layers);
   for (;;) {
     size_t next = count;
     for (size_t i = 0; i < count; ++i) {
@@ -368,8 +516,13 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
       break;
     const auto &v = trials[next];
     try {
-      if(certified){require(v.alpha>=0&&v.beta>=0&&v.alpha+v.beta<=1,"full operator requires simplex");kernel.correction="certified-PSD,jitter=1e-6";kernel.pd_blocks={{"K"}};}
-      else kernel = full.combine(v.alpha, v.beta, nullptr, policy);
+      if (cache) {
+        selected_operator =
+            cache->prepare(layers.a.ids, v.alpha, v.beta, policy, cap);
+        kernel.correction = "operator,jitter=1e-6";
+        kernel.pd_blocks = selected_operator->diagnostics;
+      } else
+        kernel = full->combine(v.alpha, v.beta, nullptr, policy);
     } catch (const std::runtime_error &ex) {
       rejected[next] = string("full coverage: ") + ex.what();
       ++failures;
@@ -438,34 +591,80 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
 } // namespace
 void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
          Timing &tm) {
-  if(cmd=="prepare"){
-    auto type=opt.get("omics-type","generic");require(type=="generic"||type=="fpkm","unknown omics type");
-    prepare_cache(opt.get("ped"),opt.get("snp"),opt.get("omics"),type=="fpkm",dir,cap);
-    tm.mark("prepare");return;
+  if (cmd == "prepare") {
+    auto type = opt.get("omics-type", "generic");
+    require(type == "generic" || type == "fpkm", "unknown omics type");
+    auto format = opt.get("snp-format", "f64");
+    require(format == "f64" || format == "2bit", "invalid --snp-format");
+    prepare_cache(opt.get("ped"), opt.get("snp"), opt.get("omics"),
+                  type == "fpkm", dir, cap, format == "2bit");
+    tm.mark("prepare");
+    return;
   }
   if (cmd == "build") {
     build(opt, dir, cap, tm);
     return;
   }
   const auto policy = read_policy(opt);
-  Layers l; std::optional<Cache> cache;
-  bool use_op=false;
-  if(opt.has("cache")){
-    require(!opt.has("A")&&!opt.has("G")&&!opt.has("O"),"--cache conflicts with external kernels");
-    cache.emplace(opt.get("cache"));auto mode=cache->mode();
-    double a=number(opt.get("alpha","0")),b=number(opt.get("beta","0"));
-    use_op=mode=="A"&&a>=0&&b>=0&&a+b<=1&&!opt.has("write-k") && opt.get("varcomp","ai-reml")!="profile-reml";
-    if(use_op)l={{cache->ped.ids,{}},{cache->g.ids,{}},{cache->o.ids,{}}};
-    else{
-      double need=(160.*cache->ped.ids.size()*cache->ped.ids.size()+64.*cache->ped.ids.size()*std::max(cache->g.columns,cache->o.columns))/1048576.;
-      require(need<=cap,"mode "+mode+" requires full dense covariance certification/materialization; estimated MiB="+std::to_string(need)+"; increase --memory-mb or use common-coverage simplex PCG without --write-k");
-      l=cache->materialize(cap);
+  require(opt.has("cache") ||
+              (!opt.has("cache-storage") && !opt.has("cache-backend")),
+          "cache options require --cache");
+  Layers l;
+  std::optional<Cache> cache;
+  bool use_op = false;
+  if (opt.has("cache")) {
+    require(!opt.has("A") && !opt.has("G") && !opt.has("O"),
+            "--cache conflicts with external kernels");
+    cache.emplace(opt.get("cache"), cap);
+    auto storage = opt.get("cache-storage", "auto");
+    require(storage == "auto" || storage == "stream", "invalid cache storage");
+    cache->streaming = storage == "stream";
+    auto mode = cache->mode();
+    double a = number(opt.get("alpha", "0")), b = number(opt.get("beta", "0"));
+    auto backend = opt.get("cache-backend", "auto");
+    require(backend == "auto" || backend == "operator" || backend == "dense",
+            "invalid cache backend");
+    bool compatible = !opt.has("write-k") &&
+                      opt.get("varcomp", "ai-reml") != "profile-reml" &&
+                      (mode != "A" || (a >= 0 && b >= 0 && a + b <= 1));
+    double full_need = (160. * cache->ped.ids.size() * cache->ped.ids.size() +
+                        64. * cache->ped.ids.size() *
+                            std::max(cache->g.columns, cache->o.columns)) /
+                       1048576.;
+    use_op = compatible && backend != "dense" &&
+             (mode == "A" || full_need > cap || backend == "operator");
+    if (backend == "auto" && !opt.has("alpha") && !opt.has("strict-simplex") &&
+        full_need <= cap)
+      use_op = false;
+    require(backend != "operator" || use_op,
+            "operator backend cannot materialize --write-k, profile-reml or "
+            "uncertified weights; use dense backend");
+    if (use_op)
+      l = {{cache->ped.ids, {}}, {cache->g.ids, {}}, {cache->o.ids, {}}};
+    else {
+      double need = (160. * cache->ped.ids.size() * cache->ped.ids.size() +
+                     64. * cache->ped.ids.size() *
+                         std::max(cache->g.columns, cache->o.columns)) /
+                    1048576.;
+      require(need <= cap, "mode " + mode +
+                               " requires full dense covariance "
+                               "certification/materialization; estimated MiB=" +
+                               std::to_string(need) +
+                               "; increase --memory-mb or use common-coverage "
+                               "simplex PCG without --write-k");
+      l = cache->materialize(cap);
     }
-  }else l={read_kernel(opt.get("A"), cap),read_kernel(opt.get("G"),cap),read_kernel(opt.get("O"),cap)};
+  } else
+    l = {read_kernel(opt.get("A"), cap), read_kernel(opt.get("G"), cap),
+         read_kernel(opt.get("O"), cap)};
   auto mode = l.mode();
   write_file(dir / "memory.tsv", [&](std::ostream &f) {
     f << "estimated_dense_mib\tlimit_mib\n"
-      << (use_op?0:budget(l.a.ids.size(), 0, cap)) << '\t' << cap << '\n';
+      << (use_op ? (256. * cache->ped.ids.size() +
+                    64. * std::max(cache->g.columns, cache->o.columns)) /
+                       1048576.
+                 : budget(l.a.ids.size(), 0, cap))
+      << '\t' << cap << '\n';
   });
   write_file(dir / "coverage.tsv", [&](std::ostream &f) {
     f << "mode\tcounts\n" << mode << '\t' << l.counts() << '\n';
@@ -481,9 +680,11 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
       require(a >= 0 && b >= 0 && a + b <= 1, "weights outside simplex");
   }
   Fusion k;
-  Phenotype p; FitOptions opts;
+  std::optional<PopulationKernel> selected_operator;
+  Phenotype p;
+  FitOptions opts;
   if (cmd == "fit") {
-    opts=fit_options(opt,tm);
+    opts = fit_options(opt, tm);
     int random = opt.has("folds") || opt.has("repeats") || opt.has("seed");
     require(random + opt.has("folds-file") + opt.has("year") + opt.has("ngen") +
                     fixed <=
@@ -492,17 +693,23 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
             "mutually exclusive");
     auto t = read_table(opt.get("pheno"));
     p = phenotype(opt, t);
+    opts.ids = &p.ids;
     positions(l.a.ids, p.ids);
     tm.mark("read_phenotype");
     if (!fixed) {
-      const auto tuning = tune(opt, t, p, l, dir, policy, cap, tm,opts,use_op?&*cache:nullptr);
+      const auto tuning = tune(opt, t, p, l, dir, policy, cap, tm, opts,
+                               use_op ? &*cache : nullptr);
       tm.mark("search");
-      k = select_fusion(tuning, l, dir, a, b, policy,use_op);
+      k = select_fusion(tuning, l, dir, a, b, policy,
+                        use_op ? &*cache : nullptr, selected_operator, cap);
     }
   } else
     require(fixed, "fuse requires alpha and beta");
-  if(fixed&&use_op){k.correction="certified-PSD,jitter=1e-6";k.pd_blocks={{"K"}};}
-  else if (fixed)
+  if (fixed && use_op) {
+    selected_operator = cache->prepare(l.a.ids, a, b, policy, cap);
+    k.correction = "operator,jitter=1e-6";
+    k.pd_blocks = selected_operator->diagnostics;
+  } else if (fixed)
     k = fuse(l, a, b, nullptr, policy);
   tm.mark("fusion");
   PdTimes pd;
@@ -519,6 +726,8 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
   });
   write_pd(dir, k, policy);
   if (cmd == "fuse" || opt.has("write-k")) {
+    require(fs::space(dir).available > 52. * l.a.ids.size() * l.a.ids.size(),
+            "insufficient disk space for --write-k");
     write_matrix(dir / "K_raw.tsv", l.a.ids, k.raw);
     write_matrix(dir / "K.tsv", l.a.ids, k.k);
     save_ids(dir / "ids.tsv", l.a.ids);
@@ -526,14 +735,37 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
   }
   if (cmd == "fit") {
     auto idx = positions(l.a.ids, p.ids);
-    FitAudit audit;audit.context="final alpha="+std::to_string(a)+" beta="+std::to_string(b);
+    if (opts.trace == "hutchinson") {
+      double need =
+          (160. * l.a.ids.size() +
+           p.ref.n_elem * (8. * (2. * opts.slq_depth + 12 * p.x.n_cols) +
+                           80. * opts.batch) +
+           opts.max_probes * (opts.slq_depth * 96. + 64.)) /
+              1048576. +
+          9;
+      require(need < cap, "stochastic solver workspace exceeds --memory-mb");
+    }
+    FitAudit audit;
+    audit.context =
+        "final alpha=" + std::to_string(a) + " beta=" + std::to_string(b);
     Model m;
-    if(use_op){
-      auto op=cache->kernel(p.ids,p.ref,a,b,cap);
-      m=fit_operator(op,p.x.rows(p.ref),p.x,p.y.elem(p.ref),opts,audit);
-    }else m=fit_model(k.k.submat(idx,idx),p.x,p.y,p.ref,opts,audit);
-    if(cache)write_file(dir/"cache_usage.tsv",[&](auto& f){f<<"mode\tbackend\tfeature_bytes\n"<<mode<<'\t'<<(use_op?"operator":"dense")<<'\t'<<cache->bytes.load()<<'\n';});
-    write_audits(dir,{audit},opts,"");
+    if (use_op) {
+      auto op = selected_operator->restrict(p.ids, p.ref, cap);
+      m = fit_operator(op, p.x.rows(p.ref), p.x, p.y.elem(p.ref), opts, audit);
+    } else
+      m = fit_dense(k.k, idx, p.x, p.y, p.ref, opts, audit);
+    if (cache)
+      write_file(dir / "cache_usage.tsv", [&](auto &f) {
+        f << "mode\tbackend\tfeature_bytes\tread_calls\tread_seconds\tdecode_"
+             "seconds\tverified_cache_bytes\tstorage\ttargets\n"
+          << mode << '\t' << (use_op ? "operator" : "dense") << '\t'
+          << cache->io.bytes.load() << '\t' << cache->io.reads.load() << '\t'
+          << cache->io.read_ns.load() * 1e-9 << '\t'
+          << cache->io.decode_ns.load() * 1e-9 << '\t' << cache->verified_bytes
+          << '\t' << (cache->streaming ? "stream" : "auto") << '\t'
+          << p.ids.size() << '\n';
+      });
+
     tm.mark("final_reml_blup");
     write_file(dir / "predictions.tsv", [&](std::ostream &f) {
       f << "id\trole\tu\tyhat\n";
@@ -542,11 +774,24 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
           << (std::isfinite(p.y[i]) ? "reference" : "candidate") << '\t'
           << m.u[i] << '\t' << m.yhat[i] << '\n';
     });
+    write_audits(dir, {audit}, opts, "");
     write_file(dir / "model.tsv", [&](std::ostream &g) {
-      g << "Vu\tVe\tlambda\tstatus\tprofile_objective\treference\tcandidate\n"
+      g << "Vu\tVe\tlambda\tstatus\tprofile_"
+           "objective\treference\tcandidate\tsolver\tvarcomp\ttrace\tcontrast_"
+           "loglik\n"
         << m.vu << '\t' << m.ve << '\t' << m.lambda << '\t' << m.status << '\t'
-        << m.objective << '\t' << p.ref.n_elem << '\t'
-        << p.ids.size() - p.ref.n_elem << '\n';
+        << (std::isfinite(m.objective) ? ([&] {
+             std::ostringstream value;
+             value << std::setprecision(17) << m.objective;
+             return value.str();
+           })()
+                                       : string("NA"))
+        << '\t' << p.ref.n_elem << '\t' << p.ids.size() - p.ref.n_elem << '\t'
+        << opts.solver << '\t' << opts.varcomp << '\t'
+        << ((opts.varcomp == "fixed" || opts.varcomp == "profile-reml")
+                ? "none"
+                : opts.trace)
+        << '\t' << audit.final_lik << '\n';
     });
     write_file(dir / "fixed.tsv", [&](std::ostream &h) {
       h << "term\testimate\n";

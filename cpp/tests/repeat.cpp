@@ -27,6 +27,24 @@ void exercise(const Layers &layers, const fs::path &path) {
   feature(4, 1) = arma::datum::nan;
   require(genomic(feature).k.is_finite() && omics(feature, false).k.is_finite(),
           "repeated raw kernels");
+  mat testk = layers.a.values;
+  vec testy = {-3., -.2, 1.7, 4.5, -1.6, 2.9, 3.5, 1.};
+  mat design(8, 1, arma::fill::ones);
+  FitOptions pcg;
+  pcg.varcomp = "fixed";
+  pcg.lambda = .5;
+  FitAudit audit;
+  uvec train = {0, 1, 2, 3, 4, 5, 6};
+  auto m = fit_model(testk, design, testy, train, pcg, audit);
+  require(m.u.is_finite(), "repeated PCG");
+  pcg.max_pcg = 1;
+  bool failed = false;
+  try {
+    fit_model(testk, design, testy, train, pcg, audit);
+  } catch (const std::runtime_error &) {
+    failed = true;
+  }
+  require(failed, "missing PCG failure");
   const FusionPlan plan(layers);
   vec y = {-3., -.2, 1.7, 4.5, -1.6, 2.9, 3.5, 1.};
   mat x(8, 1, arma::fill::ones);

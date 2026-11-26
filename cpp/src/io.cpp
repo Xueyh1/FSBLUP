@@ -123,8 +123,65 @@ struct Reader {
   }
 };
 } // namespace
-void scan_table(const fs::path& path,const std::function<void(const Ids&)>& header,const std::function<void(const Ids&)>& visit){
- Reader reader(path);header(reader.header);Ids row;while(reader.next(row))visit(row);
+void scan_table(const fs::path &path,
+                const std::function<void(const Ids &)> &header,
+                const std::function<void(const Ids &)> &visit) {
+  Reader reader(path);
+  header(reader.header);
+  Ids row;
+  while (reader.next(row))
+    visit(row);
+}
+void scan_genotypes(
+    const fs::path &path, const std::function<void(const Ids &)> &header,
+    const std::function<void(const string &, const std::vector<uint8_t> &)>
+        &visit) {
+  Reader r(path);
+  header(r.header);
+  size_t m = r.header.size() - 1;
+  std::vector<uint8_t> code(m);
+  auto parse = [](std::string_view s) -> uint8_t {
+    if (s.size() == 1 && s.front() >= '0' && s.front() <= '2')
+      return s.front() - '0';
+    if (s == "-9" || s == "NA" || s.empty())
+      return 3;
+    double v = number(string(s));
+    if (v == -9)
+      return 3;
+    require(v == 0 || v == 1 || v == 2, "invalid genotype");
+    return uint8_t(v);
+  };
+  string line, id;
+  while (std::getline(r.in, line)) {
+    if (line.find('"') != string::npos) {
+      auto row = r.parse(line);
+      require(row.size() == m + 1, "genotype column count");
+      id = row[0];
+      for (size_t j = 0; j < m; ++j)
+        code[j] = parse(row[j + 1]);
+    } else {
+      ++r.line_no;
+      if (!line.empty() && line.back() == '\r')
+        line.pop_back();
+      std::string_view view(line);
+      size_t sep = view.find(r.delim);
+      require(sep != view.npos, "missing genotype columns");
+      id = view.substr(0, sep);
+      size_t begin = sep + 1, j = 0;
+      while (true) {
+        sep = view.find(r.delim, begin);
+        if (j >= m)
+          throw std::runtime_error("extra genotype columns");
+        code[j++] = parse(view.substr(begin, sep - begin));
+        if (sep == view.npos)
+          break;
+        begin = sep + 1;
+      }
+      require(j == m, "missing genotype columns");
+    }
+    visit(id, code);
+  }
+  require(r.in.eof(), "genotype input read error");
 }
 size_t Table::col(const string &name) const {
   auto i = std::find(header.begin(), header.end(), name);

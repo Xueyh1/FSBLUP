@@ -2,8 +2,8 @@
 #include <csignal>
 using namespace fsb;
 namespace {
-const char *help = R"(fsblup 0.3.0
-  prepare --ped PED --snp SNP --omics OMICS [--omics-type generic|fpkm] --out CACHE
+const char *help = R"(fsblup 0.4.0
+  prepare [--snp-format f64|2bit] --ped PED --snp SNP --omics OMICS [--omics-type generic|fpkm] --out CACHE
   fit --cache CACHE --pheno TABLE --trait TRAIT [fit options] --out DIR
   build --ped PED --snp SNP --omics OMICS [--omics-type generic|fpkm] --out DIR
   fuse --A A --G G --O O --alpha AWT --beta BWT --out DIR
@@ -12,8 +12,10 @@ const char *help = R"(fsblup 0.3.0
        | --year CUTOFF | --ngen CUTOFF] [--metric cor|rmse|auc] [--score-col COL]
       [--covar COL,...] [--factor COL,...] [--parallel blas|weights] [--strict-simplex] [--write-k]
   fit: --solver pcg|direct --varcomp ai-reml|em-reml|profile-reml|fixed
-       --trace exact --lambda L --preconditioner jacobi|identity --pcg-rtol R --pcg-atol A
-       --pcg-maxiter N --reml-maxiter N --reml-tol T --init-vu G --init-ve E
+       --trace exact|hutchinson --probes N --max-probes N --probe-seed N --slq-depth N --lambda L --preconditioner jacobi|identity|nystrom --pcg-rtol R --pcg-atol A
+       --pcg-maxiter N --pcg-rank N --reml-maxiter N --reml-tol T --init-vu G --init-ve E
+  Cache: --cache-backend auto|operator|dense --cache-storage auto|stream
+  Random trace: --probe-solver pcg|lanczos --probe-batch N --mc-tol T --slq-tol T --slq-reorth full|local
   Logging: --log-level off|error|warn|info|debug|trace --log-file FILE --log-every N
   All commands accept --threads N (default 1) and --memory-mb N (dense estimate).
   fuse and fit accept --pd-policy strict|nearPD (default strict).
@@ -49,7 +51,7 @@ int main(int argc, char **argv) {
       return 0;
     }
     if (string(argv[1]) == "--version") {
-      std::cout << "fsblup 0.3.0\n";
+      std::cout << "fsblup 0.4.0\n";
       return 0;
     }
     string cmd = argv[1];
@@ -67,14 +69,38 @@ int main(int argc, char **argv) {
     if (std::signal(SIGXFSZ, SIG_IGN) == SIG_ERR)
       throw std::runtime_error("cannot configure file-size limit handling");
     Destination dest(opt.get("out"));
-    string log_path=opt.get("log-file","");
-    if(!log_path.empty()){
-      auto relative=fs::absolute(log_path).lexically_normal().lexically_relative(fs::absolute(dest.dest).lexically_normal());
-      if(!relative.empty() && *relative.begin()!="..")log_path=(dest.work/relative).string();
+    string log_path = opt.get("log-file", "");
+    fs::path publish_log;
+    if (opt.has("log-file")) {
+      require(!log_path.empty(), "empty --log-file");
+      for (const auto &key :
+           {"A", "G", "O", "pheno", "ped", "snp", "omics", "folds-file"}) {
+        if (opt.has(key) && fs::exists(log_path) && fs::exists(opt.get(key)))
+          require(!fs::equivalent(log_path, opt.get(key)),
+                  "log file conflicts with input " + string(key));
+      }
+      auto absolute = fs::absolute(log_path).lexically_normal();
+      auto relative = absolute.lexically_relative(
+          fs::absolute(dest.dest).lexically_normal());
+      if (!relative.empty() && *relative.begin() != "..") {
+        publish_log = dest.work / relative;
+        log_path = (dest.work / ".fsblup-internal-log").string();
+      }
     }
-    integer(opt.get("log-every","10"),1);
-    RunLog logger(opt,log_path,cmd);
-    Timing tm;tm.log=&logger;
+    integer(opt.get("log-every", "10"), 1);
+    RunLog logger(opt, log_path, cmd);
+    auto publish = [&] {
+      logger.verify();
+      if (!publish_log.empty()) {
+        require(!fs::exists(publish_log),
+                "log file conflicts with result file");
+        fs::create_directories(publish_log.parent_path());
+        fs::rename(log_path, publish_log);
+      }
+      dest.publish();
+    };
+    Timing tm;
+    tm.log = &logger;
     try {
       run(cmd, opt, dest.work, cap, tm);
     } catch (const TuningFailure &e) {
@@ -82,13 +108,17 @@ int main(int argc, char **argv) {
                  [&](std::ostream &f) { f << e.what() << '\n'; });
       tm.mark("failed_search");
       tm.save(dest.work);
-      logger.info(string("stage=failed reason=")+e.what());logger.verify();
-      dest.publish();
+      logger.info(string("stage=failed reason=") + e.what());
+      publish();
+      throw;
+    } catch (const std::exception &e) {
+      logger.error(string("stage=failed reason=") + e.what());
+      logger.verify();
       throw;
     }
     tm.save(dest.work);
-    logger.info("stage=complete");logger.verify();
-    dest.publish();
+    logger.info("stage=complete");
+    publish();
     return 0;
   } catch (const std::exception &e) {
     std::cerr << "fsblup: " << e.what() << '\n';

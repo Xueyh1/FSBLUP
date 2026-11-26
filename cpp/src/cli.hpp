@@ -19,19 +19,32 @@ struct Options {
   }
   string get(string k, string def) const { return has(k) ? v.at(k) : def; }
   Options(int argc, char **argv, string cmd) {
-    std::set<string> allowed = {"out", "threads", "memory-mb","log-file","log-level","log-every"};
-    if (cmd == "build" || cmd=="prepare")
+    std::set<string> allowed = {"out",      "threads",   "memory-mb",
+                                "log-file", "log-level", "log-every"};
+    if (cmd == "build" || cmd == "prepare")
       allowed.insert({"ped", "snp", "omics", "omics-type"});
     else {
       allowed.insert({"A", "G", "O", "alpha", "beta", "pd-policy"});
       if (cmd == "fit")
-        allowed.insert({"cache","pheno", "id", "trait", "folds", "repeats", "seed",
-                        "folds-file", "year", "ngen", "metric", "score-col",
-                        "solver","varcomp","trace","lambda","pcg-rtol","pcg-atol","pcg-maxiter","preconditioner","reml-maxiter","reml-tol","init-vu","init-ve","parallel", "covar", "factor", "strict-simplex",
-                        "write-k"});
+        allowed.insert({"cache",          "cache-backend",  "cache-storage",
+                        "pcg-rank",       "pheno",          "id",
+                        "trait",          "folds",          "repeats",
+                        "seed",           "folds-file",     "year",
+                        "ngen",           "metric",         "score-col",
+                        "slq-reorth",     "probe-solver",   "probes",
+                        "max-probes",     "probe-seed",     "slq-depth",
+                        "probe-batch",    "mc-tol",         "slq-tol",
+                        "solver",         "varcomp",        "trace",
+                        "lambda",         "pcg-rtol",       "pcg-atol",
+                        "pcg-maxiter",    "preconditioner", "reml-maxiter",
+                        "reml-tol",       "init-vu",        "init-ve",
+                        "parallel",       "covar",          "factor",
+                        "strict-simplex", "write-k"});
       else
         require(cmd == "fuse", "unknown subcommand: " + cmd);
     }
+    if (cmd == "prepare")
+      allowed.insert("snp-format");
     for (int i = 2; i < argc; ++i) {
       string arg = argv[i];
       require(arg.rfind("--", 0) == 0, "expected --option: " + arg);
@@ -50,7 +63,7 @@ struct Options {
 };
 using Clock = std::chrono::steady_clock;
 struct Timing {
-  RunLog* log=nullptr;
+  RunLog *log = nullptr;
   Clock::time_point start = Clock::now(), last = start;
   std::vector<std::pair<string, double>> times;
   size_t weight_workers = 1;
@@ -58,6 +71,9 @@ struct Timing {
     auto now = Clock::now();
     times.emplace_back(stage,
                        std::chrono::duration<double>(now - last).count());
+    if (log)
+      log->info("stage=" + stage +
+                " seconds=" + std::to_string(times.back().second));
     last = now;
   }
   void save(const fs::path &dir) {

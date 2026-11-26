@@ -3,8 +3,8 @@
 namespace fsb {
 // Apply the p QR reflectors to K and y.  Once the leading coordinate of a
 // reflector has been eliminated, only the trailing covariance block is used.
-void residual_spectrum(const mat &kernel, const mat &design, const vec &phenotype,
-                       vec &eigen, vec &z) {
+void residual_spectrum(const mat &kernel, const mat &design,
+                       const vec &phenotype, vec &eigen, vec &z) {
   const arma::uword n = design.n_rows, p = design.n_cols;
   // Wide designs leave a smaller contrast space. Blocked QR and matrix
   // multiplication avoid a long series of memory-bound rank-two updates.
@@ -44,7 +44,15 @@ void residual_spectrum(const mat &kernel, const mat &design, const vec &phenotyp
   z = basis.t() * y.tail(n - p);
 }
 Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
-            double fixed) {
+            double fixed, bool variance_only) {
+  if (fixed > 0) {
+    FitOptions o;
+    o.varcomp = "fixed";
+    o.solver = "direct";
+    o.lambda = fixed;
+    FitAudit audit;
+    return fit_model(k, x, y, train, o, audit);
+  }
   require(k.n_rows == k.n_cols && k.n_rows == x.n_rows && y.n_elem == k.n_rows,
           "model dimensions");
   mat xt = x.rows(train);
@@ -126,10 +134,14 @@ Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
   const double scaled_vu = arma::mean(z_squared / (eigen + lambda));
   const double vu = std::scalbn(scaled_vu, 2 * exponent);
   const double ve = std::scalbn(lambda * scaled_vu, 2 * exponent);
-  require(vu > 0. && ve > 0. && std::isfinite(vu) && std::isfinite(ve),
-          "variance components outside the representable range in phenotype units");
-  const double objective = profile(best) + 2. * (n - p) * exponent * std::log(2.);
+  require(
+      vu > 0. && ve > 0. && std::isfinite(vu) && std::isfinite(ve),
+      "variance components outside the representable range in phenotype units");
+  const double objective =
+      profile(best) + 2. * (n - p) * exponent * std::log(2.);
   require(std::isfinite(objective), "nonfinite REML profile objective");
+  if (variance_only)
+    return {{}, {}, {}, lambda, vu, ve, objective, status};
   kt.diag() += lambda;
   mat lower;
   require(arma::chol(lower, kt, "lower"),
@@ -142,7 +154,9 @@ Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
   vec yhat = x * b + u + offset;
   b(0) += offset;
   if (exponent != 0) {
-    auto restore_units = [exponent](double v) { return std::scalbn(v, exponent); };
+    auto restore_units = [exponent](double v) {
+      return std::scalbn(v, exponent);
+    };
     b.transform(restore_units);
     u.transform(restore_units);
     yhat.transform(restore_units);

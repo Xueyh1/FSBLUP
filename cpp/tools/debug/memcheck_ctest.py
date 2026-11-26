@@ -20,7 +20,7 @@ def main():
         "core_test",
         "nearpd_core_test",
         "io_limits_test",
-        "repeat_test",
+        "repeat_test","pcg_math_test","cache_math_test",
     ):
         exe = build / name
         wrapper = out / name

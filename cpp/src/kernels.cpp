@@ -224,6 +224,8 @@ mat adjusted(const mat &raw, string &note, PdPolicy policy,
             d.block + ": covariance still singular after jitter");
     d.min_used = d.min_raw + jitter;
   } else if (policy == PdPolicy::near_pd && !cholesky_succeeds(k)) {
+    require(diagnostics != PdDiagnostics::certification,
+            "complete-population nearPD required");
     // Match R's adj_pos order: jitter once, then nearPD on failure.
     NearPdResult result;
     try {
@@ -264,6 +266,8 @@ mat factor_block(const mat &base, const string &label) {
   return lower;
 }
 mat regression(const mat &cross, const mat &lower) {
+  if (cross.n_rows == 0)
+    return mat(0, lower.n_rows);
   return arma::solve(arma::trimatu(lower.t()),
                      arma::solve(arma::trimatl(lower), cross.t()))
       .t();
@@ -292,8 +296,8 @@ FusionPlan::Nested::Nested(const Layers &l) {
   r24 = regression(a.submat(g, s), lower44);
   k12 = regression(a.submat(u, g), factor_block(a.submat(g, g), "A22")) * g22;
 }
-FusionPlan::FusionPlan(const Layers &layers)
-    : layers_(layers), mode_(layers.mode()) {
+FusionPlan::FusionPlan(const Layers &layers, bool nested_subblock)
+    : layers_(layers), mode_(nested_subblock ? "C" : layers.mode()) {
   if (mode_ == "C") {
     try {
       nested_.emplace(layers);
