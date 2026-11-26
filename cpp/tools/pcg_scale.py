@@ -3,6 +3,8 @@ Run in a Slurm allocation. Timings include actual text preparation, full cache v
 and predictions for every ID. Byte counts distinguish normalized doubles from genotypes.
 """
 
+import tempfile
+import shutil
 import argparse, csv, os, subprocess, time
 from pathlib import Path
 import numpy as np
@@ -141,7 +143,10 @@ def main():
             for n in map(int, a.sizes.split(",")):
                 d = a.root / f"{mode}-{n}-{a.markers}-{a.omics}"
                 if not d.exists():
-                    generate(d, n, a.markers, a.omics, mode == "C")
+                    with tempfile.TemporaryDirectory(dir=a.root) as stage:
+                        source = Path(stage) / "inputs"
+                        generate(source, n, a.markers, a.omics, mode == "C")
+                        source.rename(d)
                 cache = d / "cache"
 
                 def run(args, out, nt, method, train):
@@ -163,26 +168,44 @@ def main():
                         out,
                     ]
                     begin = time.perf_counter()
-                    try:
-                        r = subprocess.run(
-                            cmd,
-                            timeout=a.timeout,
-                            capture_output=True,
-                            text=True,
-                            env={
-                                **os.environ,
-                                "OPENBLAS_NUM_THREADS": str(
-                                    1
-                                    if method.startswith("cv-")
-                                    and a.parallel == "weights"
-                                    else nt
-                                ),
-                                "OMP_NUM_THREADS": "1",
-                            },
-                        )
-                        code, reason = r.returncode, r.stderr.strip()
-                    except subprocess.TimeoutExpired:
-                        code, reason = 124, "per-job time budget"
+                    previous = set(out.parent.glob(out.name + ".tmp.*"))
+                    env = {
+                        **os.environ,
+                        "OPENBLAS_NUM_THREADS": str(
+                            1
+                            if method.startswith("cv-") and a.parallel == "weights"
+                            else nt
+                        ),
+                        "OMP_NUM_THREADS": "1",
+                    }
+                    with subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        env=env,
+                    ) as child:
+                        peak = None
+                        try:
+                            _, stderr = child.communicate(timeout=a.timeout)
+                            code, reason = child.returncode, stderr.strip()
+                        except subprocess.TimeoutExpired:
+                            stat = Path(f"/proc/{child.pid}/status")
+                            if stat.exists():
+                                peak = next(
+                                    (
+                                        int(v.split()[1])
+                                        for v in stat.read_text().splitlines()
+                                        if v.startswith("VmHWM:")
+                                    ),
+                                    None,
+                                )
+                            child.kill()
+                            child.communicate()
+                            code, reason = 124, "per-job time budget"
+                            staging = out.parent / (out.name + ".tmp." + str(child.pid))
+                            if staging.is_dir() and staging not in previous:
+                                shutil.rmtree(staging)
                     row = dict(
                         N_A=n,
                         N_G=n if mode == "A" else min(72, n // 3),
@@ -197,10 +220,12 @@ def main():
                         elapsed_s=time.perf_counter() - begin,
                         status=code,
                         reason=reason,
+                        peak_rss_KiB=peak,
                     )
 
                     def rows(f):
-                        return list(csv.DictReader((out / f).open(), delimiter="\t"))
+                        with (out / f).open() as handle:
+                            return list(csv.DictReader(handle, delimiter="\t"))
 
                     if not code:
                         row["peak_rss_KiB"] = rows("runtime.tsv")[0]["peak_rss_kib"]

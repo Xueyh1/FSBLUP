@@ -74,6 +74,8 @@ for solver, method in [
         eu = np.abs(r.u - pred.u)
         ey = np.abs(r.yhat - pred.yhat)
     info = pd.read_csv(d / "pcg_summary.tsv", sep="\t").iloc[0]
+    rank = lambda v: list(v[~train].sort_values(ascending=False, kind="stable").index)
+    assert rank(pred.u) == rank(r.u)
     results.append(
         dict(
             method=method,
@@ -83,6 +85,7 @@ for solver, method in [
             ratio=m["lambda"],
             max_du=eu.max(),
             max_dyhat=ey.max(),
+            matched_candidate_ranks=20,
             candidate_du=eu[~train].max(),
             candidate_dyhat=ey[~train].max(),
             rhs=info.rhs,

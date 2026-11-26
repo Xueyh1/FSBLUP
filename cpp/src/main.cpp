@@ -13,9 +13,9 @@ const char *help = R"(fsblup 0.4.0
       [--covar COL,...] [--factor COL,...] [--parallel blas|weights] [--strict-simplex] [--write-k]
   fit: --solver pcg|direct --varcomp ai-reml|em-reml|profile-reml|fixed
        --trace exact|hutchinson --probes N --max-probes N --probe-seed N --slq-depth N --lambda L --preconditioner jacobi|identity|nystrom --pcg-rtol R --pcg-atol A
-       --pcg-maxiter N --pcg-rank N --reml-maxiter N --reml-tol T --init-vu G --init-ve E
+       --pcg-maxiter N --pcg-rank N --reml-maxiter N --max-backtracks N --reml-tol T --init-vu G --init-ve E
   Cache: --cache-backend auto|operator|dense --cache-storage auto|stream|resident
-  Random trace: --probe-solver pcg|lanczos --probe-batch N --mc-tol T --slq-tol T --slq-reorth full|local --trace-rank R
+  Random trace: --probe-solver pcg|lanczos --probe-batch N --mc-tol T --slq-tol T --slq-reorth full|local --slq-batch N --trace-rank R
   Logging: --log-level off|error|warn|info|debug|trace --log-file FILE --log-every N
   All commands accept --threads N (default 1) and --memory-mb N (dense estimate).
   fuse and fit accept --pd-policy strict|nearPD (default strict).

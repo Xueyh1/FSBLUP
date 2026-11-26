@@ -51,6 +51,13 @@ bwrap --unshare-all --die-with-parent --clearenv --setenv PATH /usr/bin:/bin \
     bin/fsblup fit --cache /mnt/features --pheno example/pheno.tsv --trait trait --id ID \
       --covar age --factor herd --alpha .2 --beta .5 --varcomp em-reml --trace exact --out /mnt/cache-em
     awk -F "\t" '\''NR==2 && ($1-0.604754055)^2<1e-10 && ($2-0.837449262)^2<1e-10 {ok=1} END {exit !ok}'\'' /mnt/cache-em/model.tsv
+    sd=source/cpp/tests/pcg_data
+    bin/fsblup fit --A "$sd/kernel.tsv" --G "$sd/kernel.tsv" --O "$sd/kernel.tsv" \
+      --pheno "$sd/trait.tsv" --trait y --alpha 0 --beta 0 --trace hutchinson \
+      --probe-solver lanczos --slq-reorth local --slq-batch 4 --slq-depth 24 \
+      --probe-seed 19 --trace-rank 4 --probes 16 --max-probes 4096 --mc-tol .025 --out /mnt/random
+    awk -F "\t" '\''NR==2 && $4=="approx-interior" && (log($3/.5))^2<.0025 {ok=1} END {exit !ok}'\'' /mnt/random/model.tsv
+    cat /mnt/random/model.tsv
     cat /mnt/cache-em/model.tsv
     cat /mnt/outer/runtime.tsv /mnt/outer/fusion.tsv
     cat /mnt/projected/pd.tsv
