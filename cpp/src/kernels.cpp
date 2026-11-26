@@ -82,8 +82,9 @@ Features genomic(mat x) {
     x.col(out.kept++) = v - 2 * p;
   }
   require(out.kept && denom > 0, "no usable genomic denominator");
-  auto w = x.head_cols(out.kept);
-  out.k = w * w.t() / denom;
+  mat w(x.memptr(), x.n_rows, out.kept, false, true);
+  out.k = w * w.t();
+  out.k /= denom;
   return out;
 }
 Features omics(mat x, bool fpkm) {
@@ -104,8 +105,9 @@ Features omics(mat x, bool fpkm) {
     x.col(out.kept++) = (v - arma::mean(v)) / arma::stddev(v);
   }
   require(out.kept > 0, "no remaining omics features");
-  auto w = x.head_cols(out.kept);
-  out.k = w * w.t() / out.kept;
+  mat w(x.memptr(), x.n_rows, out.kept, false, true);
+  out.k = w * w.t();
+  out.k /= out.kept;
   return out;
 }
 string Layers::counts() const {
