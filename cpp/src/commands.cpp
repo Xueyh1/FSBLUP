@@ -1,0 +1,306 @@
+#include "cli.hpp"
+namespace fsb {
+namespace {
+Ids names(const Options &opt, string key) {
+  Ids cols;
+  if (opt.has(key)) {
+    std::istringstream ss(opt.get(key));
+    string s;
+    while (std::getline(ss, s, ','))
+      cols.push_back(s);
+    require(!cols.empty(), "empty column list");
+    unique_ids(cols);
+  }
+  return cols;
+}
+void save_ids(const fs::path &p, const Ids &ids) {
+  auto f = output(p);
+  f << "id\n";
+  for (auto &id : ids)
+    f << field(id) << '\n';
+}
+Kernel raw_features(const fs::path &p, bool snp, bool fpkm, double cap,
+                    Features &qc) {
+  auto features = read_features(p, cap);
+  qc = snp ? genomic(std::move(features.values))
+           : omics(std::move(features.values), fpkm);
+  return {std::move(features.ids), std::move(qc.k)};
+}
+void build(const Options &opt, const fs::path &dir, double cap, Timing &tm) {
+  auto p = read_table(opt.get("ped"));
+  for (auto &s : p.header)
+    for (char &c : s)
+      c = std::tolower(static_cast<unsigned char>(c));
+  unique_ids(p.header);
+  auto a = pedigree(p.column("id"), p.column("sire"), p.column("dam"), cap);
+  tm.mark("pedigree");
+  Features gq, oq;
+  auto type = opt.get("omics-type", "generic");
+  require(type == "generic" || type == "fpkm", "unknown omics type");
+  auto g = raw_features(opt.get("snp"), true, false, cap, gq);
+  tm.mark("genomic");
+  auto o = raw_features(opt.get("omics"), false, type == "fpkm", cap, oq);
+  tm.mark("omics");
+  output(dir / "memory.tsv")
+      << "estimated_dense_mib\tlimit_mib\n"
+      << std::max(
+             {budget(a.ids.size(), 0, cap),
+              budget(g.ids.size(), gq.kept + gq.filtered, cap),
+              budget(o.ids.size(), oq.kept + oq.filtered + oq.constant, cap)})
+      << '\t' << cap << '\n';
+  auto q = output(dir / "qc.tsv");
+  q << "layer\tsamples\tretained_features\tfiltered_features\tconstant_"
+       "removed\timputed_cells\n";
+  q << "A\t" << a.ids.size() << "\tNA\tNA\tNA\tNA\n";
+  for (auto item :
+       {std::make_tuple("G", &g, &gq), std::make_tuple("O", &o, &oq)}) {
+    auto [name, k, v] = item;
+    q << name << '\t' << k->ids.size() << '\t' << v->kept << '\t' << v->filtered
+      << '\t' << v->constant << '\t' << v->imputed << '\n';
+  }
+  for (auto item : {std::make_pair("A", &a), std::make_pair("G", &g),
+                    std::make_pair("O", &o)}) {
+    auto [name, k] = item;
+    write_matrix(dir / (string(name) + ".tsv"), k->ids, k->values);
+    save_ids(dir / (string(name) + ".ids.tsv"), k->ids);
+  }
+  Layers layers{std::move(a), std::move(g), std::move(o)};
+  string mode;
+  try {
+    mode = layers.mode();
+  } catch (const std::runtime_error &) {
+    mode = "unsupported";
+  }
+  output(dir / "coverage.tsv") << "mode\tcounts\n"
+                               << mode << '\t' << layers.counts() << '\n';
+  tm.mark("write");
+}
+struct Phenotype {
+  Ids ids, effects, levels;
+  vec y, truth;
+  mat x;
+  uvec ref;
+};
+Phenotype phenotype(const Options &opt, const Table &t) {
+  Phenotype p;
+  p.ids = t.column(opt.get("id", "ID"));
+  unique_ids(p.ids);
+  size_t n = p.ids.size(), trait = t.col(opt.get("trait")),
+         scorecol = t.col(opt.get("score-col", opt.get("trait")));
+  p.y.set_size(n);
+  p.truth.set_size(n);
+  for (size_t i = 0; i < n; ++i) {
+    auto &r = t.rows[i];
+    p.y[i] = missing(r[trait]) ? NAN : number(r[trait]);
+    p.truth[i] = std::isfinite(p.y[i]) ? number(r[scorecol]) : NAN;
+  }
+  p.ref = arma::find_finite(p.y);
+  require(!p.ref.empty(), "no reference phenotypes");
+  p.effects = {"(Intercept)"};
+  p.x.ones(n, 1);
+  for (auto &c : names(opt, "covar")) {
+    auto v = t.column(c);
+    vec z(n);
+    for (size_t i = 0; i < n; ++i)
+      z[i] = number(v[i]);
+    p.x.insert_cols(p.x.n_cols, z);
+    p.effects.push_back(c);
+  }
+  for (auto &c : names(opt, "factor")) {
+    auto v = t.column(c);
+    std::set<string> levels(v.begin(), v.end());
+    require(!levels.empty() && !missing(*levels.begin()) && !levels.count("NA"),
+            "missing factor: " + c);
+    p.levels.push_back(c + "=" + *levels.begin());
+    for (auto iter = std::next(levels.begin()); iter != levels.end(); ++iter) {
+      vec z(n);
+      for (size_t i = 0; i < n; ++i)
+        z[i] = (v[i] == *iter);
+      p.x.insert_cols(p.x.n_cols, z);
+      p.effects.push_back(c + "=" + *iter);
+    }
+  }
+  unique_ids(p.effects);
+  return p;
+}
+Labels labels_from_file(const fs::path &path, const Ids &ids, bool &temporal) {
+  auto t = read_table(path);
+  size_t id = t.col("id"), r = t.col("repeat"), f = t.col("fold");
+  std::map<string, size_t> idx;
+  for (size_t i = 0; i < ids.size(); ++i)
+    idx[ids[i]] = i;
+  Labels labels;
+  for (auto &row : t.rows) {
+    int rep = integer(row[r], 1), fold = integer(row[f], 0);
+    auto &v = labels[rep];
+    if (v.empty())
+      v.resize(ids.size(), -1);
+    require(idx.count(row[id]), "fold ID outside reference: " + row[id]);
+    auto i = idx.at(row[id]);
+    require(v[i] == -1, "duplicate fold entry: " + row[id]);
+    v[i] = fold;
+    if (!fold)
+      temporal = true;
+  }
+  for (auto &[r, v] : labels)
+    require(std::find(v.begin(), v.end(), -1) == v.end(),
+            "missing reference in folds file");
+  return labels;
+}
+std::pair<double, double> tune(const Options &opt, const Table &t,
+                               const Phenotype &p, const Layers &layers,
+                               const fs::path &dir) {
+  Ids refs;
+  for (auto i : p.ref)
+    refs.push_back(p.ids[i]);
+  auto l = layers.subset(refs);
+  require(!l.o.ids.empty() &&
+              (layers.mode() == "A" ||
+               (l.o.ids.size() < l.g.ids.size() &&
+                (layers.mode() == "B" || l.g.ids.size() < l.a.ids.size()))),
+          "reference coverage degenerates: " + l.counts() +
+              "; supply fixed --alpha and --beta");
+  string metric = opt.get("metric", "cor");
+  bool time = false;
+  Labels labels;
+  if (opt.has("folds-file"))
+    labels = labels_from_file(opt.get("folds-file"), refs, time);
+  else if (opt.has("year") || opt.has("ngen")) {
+    time = true;
+    string key = opt.has("year") ? "year" : "ngen";
+    auto col = t.column(key);
+    double cutoff = number(opt.get(key));
+    for (auto i : p.ref)
+      labels[1].push_back(number(col[i]) > cutoff);
+  } else
+    labels = random_labels(refs, integer(opt.get("folds", "5"), 2),
+                           integer(opt.get("repeats", "2"), 1),
+                           integer(opt.get("seed", "42"), 0));
+  auto table = output(dir / "folds.tsv");
+  table << "repeat\tfold\tid\n";
+  for (auto &[r, v] : labels)
+    for (size_t i = 0; i < refs.size(); ++i)
+      table << r << '\t' << v[i] << '\t' << field(refs[i]) << '\n';
+  mat x = p.x.rows(p.ref);
+  vec y = p.y.elem(p.ref), truth = p.truth.elem(p.ref);
+  auto folds = split(labels, time, truth, metric);
+  auto summary = output(dir / "fold_counts.tsv");
+  summary << "repeat\tfold\ttraining\tvalidation\treason\n";
+  for (auto &f : folds)
+    summary << f.repeat << '\t' << f.fold << '\t' << f.train.n_elem << '\t'
+            << f.valid.n_elem << '\t' << f.reason << '\n';
+  auto result = search(
+      opt.has("strict-simplex"), metric == "rmse", [&](double a, double b) {
+        return evaluate_weight(l, a, b, x, y, truth, folds, metric);
+      });
+  auto trace = output(dir / "search.tsv");
+  trace << "stage\talpha\tbeta\tmean\tvalid\treason\tcorrection";
+  for (auto &f : folds)
+    trace << "\tr" << f.repeat << "f" << f.fold;
+  trace << '\n';
+  for (auto &v : result.trials) {
+    auto &e = v.result;
+    trace << v.stage << '\t' << v.alpha << '\t' << v.beta << '\t' << e.value
+          << '\t' << e.reason.empty() << '\t' << e.reason << '\t'
+          << e.correction;
+    for (auto s : e.scores)
+      trace << '\t' << s;
+    trace << '\n';
+  }
+  if (!std::isfinite(result.best))
+    throw TuningFailure(result.stop + ": " +
+                        result.trials.front().result.reason);
+  output(dir / "tuning.tsv") << "metric\tselection_score\tstop\tcoverage\n"
+                             << metric << '\t' << result.best << '\t'
+                             << result.stop << '\t' << l.counts() << '\n';
+  return {result.alpha, result.beta};
+}
+} // namespace
+void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
+         Timing &tm) {
+  if (cmd == "build") {
+    build(opt, dir, cap, tm);
+    return;
+  }
+  Layers l{read_kernel(opt.get("A"), cap), read_kernel(opt.get("G"), cap),
+           read_kernel(opt.get("O"), cap)};
+  auto mode = l.mode();
+  output(dir / "memory.tsv")
+      << "estimated_dense_mib\tlimit_mib\n"
+      << budget(l.a.ids.size(), 0, cap) << '\t' << cap << '\n';
+  output(dir / "coverage.tsv") << "mode\tcounts\n"
+                               << mode << '\t' << l.counts() << '\n';
+  tm.mark("read_kernels");
+  bool fixed = opt.has("alpha");
+  require(fixed == opt.has("beta"), "supply both alpha and beta");
+  double a = 0, b = 0;
+  if (fixed) {
+    a = number(opt.get("alpha"));
+    b = number(opt.get("beta"));
+    if (opt.has("strict-simplex"))
+      require(a >= 0 && b >= 0 && a + b <= 1, "weights outside simplex");
+  }
+  Phenotype p;
+  if (cmd == "fit") {
+    int random = opt.has("folds") || opt.has("repeats") || opt.has("seed");
+    require(random + opt.has("folds-file") + opt.has("year") + opt.has("ngen") +
+                    fixed <=
+                1,
+            "fixed weights, random folds, external folds and time split are "
+            "mutually exclusive");
+    auto t = read_table(opt.get("pheno"));
+    p = phenotype(opt, t);
+    positions(l.a.ids, p.ids);
+    tm.mark("read_phenotype");
+    if (!fixed) {
+      std::tie(a, b) = tune(opt, t, p, l, dir);
+      tm.mark("search");
+    }
+  } else
+    require(fixed, "fuse requires alpha and beta");
+  Fusion k;
+  try {
+    k = fuse(l, a, b);
+  } catch (const std::runtime_error &e) {
+    if (cmd == "fit" && !fixed)
+      throw TuningFailure("selected weights alpha=" + std::to_string(a) +
+                          " beta=" + std::to_string(b) +
+                          " failed on full coverage: " + e.what());
+    throw;
+  }
+  tm.mark("fusion");
+  output(dir / "fusion.tsv")
+      << "mode\talpha\tbeta\tcorrection\n"
+      << mode << '\t' << a << '\t' << b << '\t' << k.correction << '\n';
+  if (cmd == "fuse" || opt.has("write-k")) {
+    write_matrix(dir / "K_raw.tsv", l.a.ids, k.raw);
+    write_matrix(dir / "K.tsv", l.a.ids, k.k);
+    save_ids(dir / "ids.tsv", l.a.ids);
+  }
+  if (cmd == "fit") {
+    auto idx = positions(l.a.ids, p.ids);
+    auto m = solve(k.k.submat(idx, idx), p.x, p.y, p.ref);
+    tm.mark("final_reml_blup");
+    auto f = output(dir / "predictions.tsv");
+    f << "id\trole\tu\tyhat\n";
+    for (size_t i = 0; i < p.ids.size(); ++i)
+      f << field(p.ids[i]) << '\t'
+        << (std::isfinite(p.y[i]) ? "reference" : "candidate") << '\t' << m.u[i]
+        << '\t' << m.yhat[i] << '\n';
+    auto g = output(dir / "model.tsv");
+    g << "Vu\tVe\tlambda\tstatus\tprofile_objective\treference\tcandidate\n"
+      << m.vu << '\t' << m.ve << '\t' << m.lambda << '\t' << m.status << '\t'
+      << m.objective << '\t' << p.ref.n_elem << '\t'
+      << p.ids.size() - p.ref.n_elem << '\n';
+    auto h = output(dir / "fixed.tsv");
+    h << "term\testimate\n";
+    for (size_t i = 0; i < p.effects.size(); ++i)
+      h << field(p.effects[i]) << '\t' << m.b[i] << '\n';
+    auto levels = output(dir / "reference_levels.tsv");
+    levels << "factor_reference\n";
+    for (auto &v : p.levels)
+      levels << field(v) << '\n';
+  }
+  tm.mark("write");
+}
+} // namespace fsb
