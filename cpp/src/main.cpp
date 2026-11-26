@@ -1,4 +1,5 @@
 #include "cli.hpp"
+#include <csignal>
 using namespace fsb;
 namespace {
 const char *help = R"(fsblup 0.3.0
@@ -55,6 +56,10 @@ int main(int argc, char **argv) {
             "--parallel weights requires automatic tuning");
     openblas_set_num_threads(parallel == "weights" ? 1 : threads);
     double cap = number(opt.get("memory-mb", "8192"));
+    // Linux first signals SIGXFSZ at a file-size limit. Let write/close
+    // return EFBIG so the checked output path can unwind its staging directory.
+    if (std::signal(SIGXFSZ, SIG_IGN) == SIG_ERR)
+      throw std::runtime_error("cannot configure file-size limit handling");
     Destination dest(opt.get("out"));
     Timing tm;
     try {

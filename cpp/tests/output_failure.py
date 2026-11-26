@@ -8,13 +8,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 
-def run_checked(binary, args, root, name, cap, expected_file):
+def run_checked(binary, args, root, name, cap, expected_file, disposition=signal.SIG_IGN):
     dest = root / name
     if name == "fit":
         dest.mkdir()  # --out also accepts an existing empty directory.
 
     def limit_file_size():
-        signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+        signal.signal(signal.SIGXFSZ, disposition)
         resource.setrlimit(resource.RLIMIT_FSIZE, (cap, cap))
 
     result = subprocess.run([str(binary), *args, "--out", str(dest)],
@@ -52,6 +52,7 @@ def test(binary, root):
         assert row == [ids[i], *expected], row
     run_checked(binary, ["fuse", *inputs], root, "metadata", 32, "memory.tsv")
     run_checked(binary, ["fuse", *inputs], root, "matrix", 512, "K_raw.tsv")
+    run_checked(binary, ["fuse", *inputs], root, "default-sigxfsz", 512, "K_raw.tsv", signal.SIG_DFL)
     run_checked(binary, ["fit", *inputs, "--pheno", str(pheno), "--trait", "y"],
                 root, "fit", 512, "predictions.tsv")
 
