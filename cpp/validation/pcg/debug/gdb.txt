@@ -1,0 +1,26 @@
+srun: job 30974 queued and waiting for resources
+srun: job 30974 has been allocated resources
+Catchpoint 1 (throw)
+
+This GDB supports auto-downloading debuginfo from the following URLs:
+  <https://debuginfod.centos.org/>
+Enable debuginfod for this session? (y or [n]) [answered N; input not from terminal]
+Debuginfod has been disabled.
+To make this setting permanent, add 'set debuginfod enabled off' to .gdbinit.
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib64/libthread_db.so.1".
+run=210088 thread=210088 info command=fit stage=start
+run=210088 thread=210088 info stage=read_kernels seconds=0.000929
+run=210088 thread=210088 info solver=pcg varcomp=fixed trace=exact
+run=210088 thread=210088 info stage=read_phenotype seconds=0.000123
+run=210088 thread=210088 info stage=fusion seconds=0.000443
+
+Catchpoint 1 (exception thrown), 0x00007ffff46ad7d2 in __cxa_throw () from /lib64/libstdc++.so.6
+#0  0x00007ffff46ad7d2 in __cxa_throw () from /lib64/libstdc++.so.6
+#1  0x000000000049dc84 in fsb::require (ok=<optimized out>, message="PCG iteration-limit rhs=X0 true_residual=1.177479") at cpp/src/io.cpp:11
+#2  0x0000000000491ee7 in fsb::System::solve_one (this=this@entry=0x7fffffff9110, b=..., rhs="X0") at cpp/src/linear.hpp:126
+#3  0x000000000049282c in fsb::Projection::Projection (this=0x7fffffff8f80, s=..., design=...) at cpp/src/linear.hpp:151
+#4  0x000000000047c393 in fsb::fit_operator (input=..., xt=..., x=..., y=..., o=..., audit=...) at cpp/src/mixed.cpp:129
+#5  0x000000000047e4a9 in fsb::fit_dense (k=..., ids=..., x=..., y=..., t=..., o=..., a=...) at cpp/src/mixed.cpp:209
+#6  0x0000000000423b9b in fsb::run (cmd="fit", opt=..., dir=filesystem::path "runs/pcg/gdb-case.tmp.210088" = {...}, cap=<optimized out>, cap@entry=8192, tm=...) at cpp/src/commands.cpp:828
+#7  0x0000000000409a8e in main (argc=<optimized out>, argv=<optimized out>) at cpp/src/main.cpp:111

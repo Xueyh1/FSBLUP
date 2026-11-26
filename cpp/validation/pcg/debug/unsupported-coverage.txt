@@ -1,0 +1,2 @@
+fsblup: mode C measured connected components needs 367.699585 MiB; raise --memory-mb or reduce the conditioning group
+fsblup: reference coverage degenerates: A=198 G=198 O=74 union=198 intersection=74 O_only=0 G_only=0 GO_only=0 A_only=0 AO_only=0 AG_only=124 AGO=74 example_6=X1001 example_7=X1231; supply fixed --alpha and --beta

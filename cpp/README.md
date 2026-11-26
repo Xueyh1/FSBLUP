@@ -1,10 +1,10 @@
-# fsblup 0.3.0
+# fsblup 0.4.0
 
 Linux 命令行工具，用于单性状、每个个体一条表型记录的融合核 BLUP。将候选个体保留在表型文件里，性状填 `NA`。在 `predictions.tsv` 中按 `role=candidate` 取其带 ID 的 `u` 和 `yhat`。未列入表型文件的系谱祖先可以参与构核。
 
 ## 直接运行
 
-发布包适用于 x86_64 Linux、glibc 2.34 及以上。解包后保留 `bin/` 和 `lib/` 的相对位置。程序、预测与调参均可在无 R 环境运行。0.3.0 在 CentOS Stream 9 构建，已在无 R 的 Red Hat UBI 9 Minimal 独立根文件系统（glibc 2.34）实测 nearPD 和多工作线程调参。以下命令在解包目录执行，输出目录使用新名字。源码树中可分别设置 `exe=build/fsblup` 和 `d=tests/data`。
+发布包适用于 x86_64 Linux、glibc 2.34 及以上。解包后保留 `bin/` 和 `lib/` 的相对位置。程序、预测与调参均可在无 R 环境运行。0.4.0 在 CentOS Stream 9 构建，已在无 R 的 Red Hat UBI 9 Minimal 独立根文件系统（glibc 2.34）实测 nearPD 和多工作线程调参。以下命令在解包目录执行，输出目录使用新名字。源码树中可分别设置 `exe=build/fsblup` 和 `d=tests/data`。
 
 ```bash
 exe=bin/fsblup
@@ -27,6 +27,38 @@ awk -F '\t' 'NR==1 || $2=="candidate"' selected/predictions.tsv
 "$exe" fuse --A "$d/A.tsv" --G "$d/G.tsv" --O "$d/O.tsv" \
   --alpha .2 --beta .5 --out fused
 ```
+
+## 求解器与方差估计
+
+`fit` 默认使用 **Jacobi-PCG + AI-REML + 精确迹**。融合权重 `--alpha`、`--beta` 与方差比 `lambda=Ve/Vu` 分别控制构核和拟合。以下命令在源码树的 cpp 目录运行；每条命令使用新输出目录。
+
+```bash
+d=tests/data
+k=(--A "$d/A.tsv" --G "$d/G.tsv" --O "$d/O.tsv")
+p=(--pheno "$d/pheno.tsv" --id ID --trait trait --covar age --factor herd)
+w=(--alpha .2 --beta .5)
+build/fsblup fit "${k[@]}" "${p[@]}" "${w[@]}" --solver pcg --varcomp ai-reml --trace exact --out fit-ai
+build/fsblup fit "${k[@]}" "${p[@]}" "${w[@]}" --solver pcg --varcomp em-reml --trace exact --out fit-em
+build/fsblup fit "${k[@]}" "${p[@]}" "${w[@]}" --solver direct --varcomp profile-reml --out fit-legacy
+build/fsblup prepare --ped "$d/ped.tsv" --snp "$d/snp.tsv" --omics "$d/omics.tsv" \
+  --omics-type generic --snp-format 2bit --out feature-cache
+build/fsblup fit --cache feature-cache "${p[@]}" "${w[@]}" --varcomp fixed --lambda .7 --out fit-fixed
+```
+
+需要大训练集时可显式选随机迹。下面使用同一套缓存和表型。参数与误差诊断保存在 `pcg_summary.tsv` 和 `reml_trace.tsv`；自动选权另有 `cv_` 前缀的折内记录。
+
+```bash
+build/fsblup fit --cache feature-cache "${p[@]}" "${w[@]}" --solver pcg --varcomp ai-reml \
+  --trace hutchinson --probe-solver lanczos --probes 16 --max-probes 512 \
+  --slq-depth 24 --probe-seed 42 --memory-mb 2048 --out fit-approx
+```
+
+- `--solver pcg|direct` 选择线性求解器。PCG 支持 `--pcg-rtol`、`--pcg-atol`、`--pcg-maxiter` 和 `--preconditioner jacobi|identity|nystrom`；Nyström 秩由 `--pcg-rank` 指定。
+- `--varcomp ai-reml|em-reml|profile-reml|fixed` 选择估计方式。fixed 需要外部给定非负 `--lambda`。AI 与 EM 可用 `--init-vu` 和 `--init-ve` 成对指定原表型单位的初值，`--reml-maxiter` 与 `--reml-tol` 控制迭代和尺度化 score。达到上限会明确失败。
+- `--trace exact|hutchinson` 适用于 AI/EM。精确迹需要训练对比谱的稠密工作区；Hutchinson 需要 PCG，可配置种子、探针上限、批大小、SLQ 深度和误差门槛。共同探针按训练 ID 派生。在 local 重正交模式下，`--slq-batch N` 可将不同探针的一次核乘合并成多列调用；N 不超过 `--probe-batch`。`--trace-rank R` 显式启用低秩控制变量。
+- `--cache-backend auto|dense|operator` 和 `--cache-storage auto|stream|resident` 分别控制核后端及训练特征驻留。resident 适用于同覆盖 A，需要能够容纳实际训练特征的预算。`--write-k` 需要全群稠密输出工作区及磁盘空间。
+- `--log-level off|error|warn|info|debug|trace` 默认 info，写 stderr，可附加 `--log-file FILE`。debug 按 `--log-every N` 采样，trace 包含 RHS 明细。必需日志发生打开、写入或 flush 错误时返回失败。
+- `model.tsv` 保留原有字段，增加实际求解器、估计器、迹后端与误差对比对数似然。遗传方差为零的边界模型输出 u=0 和 lambda=inf；融合核包含组学时，Vu 是整个融合随机效应的方差尺度。精确、随机与旧版的目标函数约定见 [0.4.0 数值和规模验收](PCG.md)。
 
 ## 输入与运行约定
 
@@ -73,7 +105,7 @@ build/fsblup fit --A "$d/test_matA.csv" --G "$d/test_matG.csv" --O "$d/test_matO
 
 ## 从源码构建
 
-需要 C++17、CMake 3.18+、Armadillo 头文件、LP64 OpenBLAS（含 LAPACK）。日常测试还需 Python 3，仅用标准库。已安装 Armadillo 的主机可省略 `-DARMADILLO_INCLUDE_DIR`。以下为本次 Slurm 主机上的完整命令，工作目录为仓库的 `cpp/`。本地头文件取自 Debian 的独立开发包。
+需要 C++17、CMake 3.18+、Armadillo 头文件、OpenSSL libcrypto 开发文件、LP64 OpenBLAS（含 LAPACK）。日常测试还需 Python 3，仅用标准库。已安装 Armadillo 的主机可省略 `-DARMADILLO_INCLUDE_DIR`。以下为本次 Slurm 主机上的完整命令，工作目录为仓库的 `cpp/`。本地头文件取自 Debian 的独立开发包。
 
 ```bash
 mkdir -p .deps

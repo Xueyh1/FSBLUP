@@ -1,0 +1,9 @@
+case	exit	errors	definitely_lost	indirectly_lost	possibly_lost	still_reachable
+raw	0	0	0	0	0	0
+spd	0	0	0	0	0	0
+fixed	0	0	0	0	0	0
+project	0	0	0	0	0	0
+strict	1	0	0	0	0	0
+outer	0	0	0	0	0	0
+short	1	0	0	0	0	0
+repeat	0	0	0	0	0	0

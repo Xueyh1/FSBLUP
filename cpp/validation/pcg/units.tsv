@@ -1,0 +1,16 @@
+method	exponent	status	scaled_Vu_error	scaled_yhat_error
+fixed	0	ok	0.0	0.0
+fixed	-500	ok	0.0	0.0
+fixed	500	ok	0.0	0.0
+fixed	-665	rejected	NA	NA
+fixed	665	rejected	NA	NA
+ai-reml	0	ok	0.0	0.0
+ai-reml	-500	ok	0.0	0.0
+ai-reml	500	ok	0.0	0.0
+ai-reml	-665	rejected	NA	NA
+ai-reml	665	rejected	NA	NA
+em-reml	0	ok	0.0	0.0
+em-reml	-500	ok	0.0	0.0
+em-reml	500	ok	0.0	0.0
+em-reml	-665	rejected	NA	NA
+em-reml	665	rejected	NA	NA

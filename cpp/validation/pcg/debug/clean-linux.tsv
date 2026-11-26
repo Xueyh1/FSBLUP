@@ -1,0 +1,7 @@
+command	solver	varcomp	ref	candidates	convergence
+fit	pcg	ai-reml	20	4	interior
+tuned	pcg	ai-reml	20	4	interior
+outer	pcg	ai-reml	27	3	interior
+cache-em	pcg	em-reml	20	4	interior
+random	pcg	ai-reml	32	8	approx-interior
+official	pcg	ai-reml	178	20	interior

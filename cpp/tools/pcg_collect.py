@@ -91,7 +91,10 @@ def main():
             f, fieldnames=list(columns), delimiter="\t", lineterminator="\n"
         )
         w.writeheader()
-        w.writerows(allrows)
+        w.writerows(
+            {k: (r.get(k) if r.get(k) not in (None, "") else "NA") for k in columns}
+            for r in allrows
+        )
 
 
 if __name__ == "__main__":

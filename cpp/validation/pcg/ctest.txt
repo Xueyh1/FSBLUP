@@ -1,0 +1,28 @@
+Internal ctest changing into directory: cpp/build-perf
+Test project cpp/build-perf
+      Start  1: core
+ 1/11 Test  #1: core .............................   Passed    0.02 sec
+      Start  2: numerical_cli
+ 2/11 Test  #2: numerical_cli ....................   Passed    0.36 sec
+      Start  3: solver_shift
+ 3/11 Test  #3: solver_shift .....................   Passed    0.06 sec
+      Start  4: nearpd_core
+ 4/11 Test  #4: nearpd_core ......................   Passed    0.01 sec
+      Start  5: nearpd_cli
+ 5/11 Test  #5: nearpd_cli .......................   Passed    0.15 sec
+      Start  6: nearpd_nested
+ 6/11 Test  #6: nearpd_nested ....................   Passed    0.08 sec
+      Start  7: output_failure
+ 7/11 Test  #7: output_failure ...................   Passed    0.09 sec
+      Start  8: solver_range
+ 8/11 Test  #8: solver_range .....................   Passed    0.09 sec
+      Start  9: io_limits
+ 9/11 Test  #9: io_limits ........................   Passed    0.01 sec
+      Start 10: concurrent_replay
+10/11 Test #10: concurrent_replay ................   Passed    0.26 sec
+      Start 11: repeated_lifetime
+11/11 Test #11: repeated_lifetime ................   Passed    0.03 sec
+
+100% tests passed, 0 tests failed out of 11
+
+Total Test time (real) =   1.14 sec

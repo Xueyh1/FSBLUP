@@ -1,5 +1,7 @@
 # 数值与发布验收记录
 
+0.4.0 的 PCG、AI/EM、随机迹误差、特征缓存与 Slurm 大群体记录见 [PCG 开发与验收报告](PCG.md)。下文保留之前发布版的实测基线。
+
 0.3.0 已以 d3ba237 为基线复验官方 178/20 模型、候选排名和嵌套逐折评分，并完成并行、内存和 glibc 2.34 验收。[0.3.0 性能与严格调试报告](PERFORMANCE.md)
 
 2026-11-26，基线 `babc8ea221664412de7deca3cdb72833d61f018a`。开发开始时上游 main 与该提交相同。主实现和参考来自仓库 `R/FSBLUP.R`，用户输入类型依据 README.md。DESCRIPTION 声明 GPL (>=3)。`renv.lock` 固定 R 4.4.1、rrBLUP 4.6.3、AGHmatrix 2.1.4、Matrix 1.7-0。已在独立目录构建 R 4.4.1 与 Matrix 1.7-0，生成脚本启动时检查四个实际版本。`R CMD build` 和 `R CMD INSTALL` 均已通过。科学来源为论文公式 3、7、Materials and methods 及补充推导。[基线源码](https://github.com/Xueyh1/FSBLUP/blob/babc8ea221664412de7deca3cdb72833d61f018a/R/FSBLUP.R) · [论文](https://pmc.ncbi.nlm.nih.gov/articles/PMC12888590/) · [Additional file 3](https://pmc-oa-opendata.s3.amazonaws.com/PMC12888590.1/13059_2026_3931_MOESM3_ESM.pdf) · [论文归档](https://doi.org/10.5281/zenodo.17760713)

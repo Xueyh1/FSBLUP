@@ -1,5 +1,7 @@
 # fsblup 0.3.0 性能与调试验收
 
+0.4.0 的 PCG、AI/EM、随机迹误差、特征缓存与 Slurm 大群体记录见 [PCG 开发与验收报告](PCG.md)。下文保留之前发布版的实测基线。
+
 2026-11-26 在目标 Slurm 节点执行。公开起点为 `d3ba237ec5da3c19ac7fb7dd3684dcaf43fbe92c`，本地与远程 cpp 相同，工作树干净。校验附件清单后，仅应用一次通过 `git apply --check` 的主补丁（`fd818a7`）。全量对称 Gram 候选保存在独立试验提交 `71e7206`；生产实现根据实测尺寸选择计算路径。`7f85dd6` 引入权重并行和计算优化，`15aca56` 修复有限矩阵的极端值回环问题。[环境与提交记录](validation/perf/environment.txt) · [输入 SHA-256](validation/perf/inputs.sha256)
 
 ## 哪些改动节省了时间
