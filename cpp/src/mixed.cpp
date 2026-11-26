@@ -172,11 +172,16 @@ Model fit_operator(const TrainKernel &input, const mat &xt, const mat &x,
 }
 Model fit_model(const mat &k, const mat &x, const vec &y, const uvec &t,
                 const FitOptions &o, FitAudit &a) {
+  require(k.n_rows > 0, "empty fitting kernel");
   uvec ids = arma::regspace<uvec>(0, k.n_rows - 1);
   return fit_dense(k, ids, x, y, t, o, a);
 }
 Model fit_dense(const mat &k, const uvec &ids, const mat &x, const vec &y,
                 const uvec &t, const FitOptions &o, FitAudit &a) {
+  require(!ids.empty() && !t.empty() && k.n_rows == k.n_cols &&
+              ids.n_elem == x.n_rows && y.n_elem == x.n_rows &&
+              ids.max() < k.n_rows && t.max() < ids.n_elem,
+          "invalid fitting dimensions or training indices");
   bool same = ids.n_elem == k.n_rows &&
               arma::all(ids == arma::regspace<uvec>(0, k.n_rows - 1));
   if (o.varcomp == "profile-reml") {

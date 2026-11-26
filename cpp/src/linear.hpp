@@ -1,5 +1,6 @@
 #pragma once
 #include "core.hpp"
+#include <chrono>
 namespace fsb {
 struct System {
   const TrainKernel &k;

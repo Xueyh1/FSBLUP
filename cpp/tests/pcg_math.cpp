@@ -73,6 +73,15 @@ int main() {
         }
     FitOptions o;
     o.varcomp = "em-reml";
+    {
+      FitAudit invalid;
+      try {
+        fit_model(k, x, y, uvec{5}, o, invalid);
+        throw std::logic_error("unvalidated training index");
+      } catch (const std::runtime_error &err) {
+        require(string(err.what()).find("indices") != string::npos, err.what());
+      }
+    }
     o.max_reml = 1;
     FitAudit a;
     try {
