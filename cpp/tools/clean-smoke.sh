@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Arguments: unpacked minimal Linux root filesystem, release tar.gz, new results directory.
+# Arguments: minimal Linux root filesystem, release tar.gz, new results directory.
+# Optionally append the official example directory and independently masked age TSV.
 base=$(realpath "$1")
 archive=$(realpath "$2")
 mkdir "$3"
@@ -21,7 +22,7 @@ bwrap --unshare-all --die-with-parent --clearenv --setenv PATH /usr/bin:/bin \
       --omics example/omics.tsv --out /mnt/kernels
     bin/fsblup fit --A /mnt/kernels/A.tsv --G /mnt/kernels/G.tsv \
       --O /mnt/kernels/O.tsv --pheno example/pheno.tsv --id ID --trait trait \
-      --covar age --factor herd --alpha .2 --beta .5 --out /mnt/fit
+      --covar age --factor herd --alpha .2 --beta .5 --threads 2 --out /mnt/fit
     bin/fsblup fit --A example/A.tsv --G example/G.tsv --O example/O.tsv \
       --pheno example/pheno.tsv --id ID --trait trait --folds-file example/folds.tsv \
       --metric rmse --out /mnt/tuned
@@ -49,3 +50,13 @@ bwrap --unshare-all --die-with-parent --clearenv --setenv PATH /usr/bin:/bin \
     cat /mnt/projected/pd.tsv
     cat /mnt/fit/model.tsv /mnt/tuned/tuning.tsv
   ' | tee "$results/smoke.log"
+if [[ $# == 5 ]]; then
+  src=$(realpath "$4")
+  cp "$5" "$results/masked.tsv"
+  bwrap --unshare-all --die-with-parent --clearenv --setenv OPENBLAS_NUM_THREADS 1 \
+    --ro-bind "$base" / --proc /proc --dev /dev --ro-bind "${root[0]}" /opt \
+    --ro-bind "$src" /srv --bind "$results" /mnt /opt/bin/fsblup fit \
+    --A /srv/test_matA.csv --G /srv/test_matG.csv --O /srv/test_matO.csv \
+    --pheno /mnt/masked.tsv --id id --trait age --alpha .2 --beta .5 \
+    --pd-policy nearPD --threads 1 --write-k --out /mnt/official
+fi

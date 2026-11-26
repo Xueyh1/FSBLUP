@@ -1,0 +1,21 @@
+Initial local HEAD, remote refs/heads/cpp: d3ba237ec5da3c19ac7fb7dd3684dcaf43fbe92c
+Initial status: ## cpp/standalone...origin/cpp (clean)
+Archive: FSBLUP_Performance_Debug_d3ba237.zip
+SHA-256: 2b9eb9d9e24bc36c2fbf00bc3b4bf3b511ba94271028de6813c8a47682da5197
+Main attachment, applied after git apply --check: fd818a7
+Isolated Gram experiment on the patched base: 71e7206baf90e42cacb05db0db26a9e2a77510b7
+CentOS Stream 9 x86_64, glibc 2.34, CMake 3.31.8
+GCC 11.5.0 Release -O3 -DNDEBUG, C++17, no -march=native or fast-math
+Clang 22.1.8 for independent ASan/UBSan and TSan builds
+Armadillo 11.4.2 headers; LP64 pthread OpenBLAS 0.3.29 DYNAMIC_ARCH SkylakeX
+Xeon Silver 4216 @ 2.10GHz, 2 sockets x 16 physical cores, SMT2, 64 logical CPUs
+Slurm task uses XFS shared workspace, buffered warm I/O. One process, one BLAS/cache domain per run.
+Main scaling job 30798: 16 logical CPUs allocated, one sibling per physical core selected
+Masks used: 1; 1,3; 1,3,5,7; 1,3,5,7,9,11,13,15
+R 4.4.1, Matrix 1.7-0, rrBLUP 4.6.3, R uses serial OpenBLAS 0.3.29
+Valgrind 3.27.1, kernel perf events available
+UBI 9 Minimal amd64 manifest sha256:2cb89feabb136a960f3e6d34f4bbcdff72404f3a18f43f01920e4a26ef389f18
+Root layer sha256:42dd82cfea990337e85629f4800f64d42e5fca052db254cd3386d99051476958
+Detector controls: Clang LSan positive 79 B; TSan race positive; Memcheck 3.27.1 positive 79 B. All clean controls exit 0.
+UBI root: Red Hat Enterprise Linux release 9.9 (Plow), no R/Rscript. Build and clean-root glibc both 2.34.
+Generic second build: GCC -O3 -DNDEBUG -fno-tree-vectorize -march=x86-64 -mtune=generic, forced OpenBLAS Nehalem.

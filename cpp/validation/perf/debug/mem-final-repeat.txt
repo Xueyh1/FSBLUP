@@ -1,0 +1,19 @@
+==3707239== Memcheck, a memory error detector
+==3707239== Copyright (C) 2002-2026, and GNU GPL'd, by Julian Seward et al.
+==3707239== Using Valgrind-3.27.1 and LibVEX; rerun with -h for copyright info
+==3707239== Command: build-perf-mem/repeat_test 30
+==3707239==
+==3707239==
+==3707239== HEAP SUMMARY:
+==3707239==     in use at exit: 0 bytes in 0 blocks
+==3707239==   total heap usage: 40,587 allocs, 40,587 frees, 11,526,878 bytes allocated
+==3707239==
+==3707239== All heap blocks were freed -- no leaks are possible
+==3707239==
+==3707239== For lists of detected and suppressed errors, rerun with: -s
+==3707239== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
+iteration	allocated_bytes	rss_KiB	pss_KiB	fds	threads
+0	132614	196468	190375	4	1
+10	197116	201500	195311	4	1
+20	261906	206508	200319	4	1
+30	326584	211524	205303	4	1

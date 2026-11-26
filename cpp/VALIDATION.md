@@ -1,5 +1,7 @@
 # 数值与发布验收记录
 
+0.3.0 已以 d3ba237 为基线复验官方 178/20 模型、候选排名和嵌套逐折评分，并完成并行、内存和 glibc 2.34 验收。[0.3.0 性能与严格调试报告](PERFORMANCE.md)
+
 2026-11-26，基线 `babc8ea221664412de7deca3cdb72833d61f018a`。开发开始时上游 main 与该提交相同。主实现和参考来自仓库 `R/FSBLUP.R`，用户输入类型依据 README.md。DESCRIPTION 声明 GPL (>=3)。`renv.lock` 固定 R 4.4.1、rrBLUP 4.6.3、AGHmatrix 2.1.4、Matrix 1.7-0。已在独立目录构建 R 4.4.1 与 Matrix 1.7-0，生成脚本启动时检查四个实际版本。`R CMD build` 和 `R CMD INSTALL` 均已通过。科学来源为论文公式 3、7、Materials and methods 及补充推导。[基线源码](https://github.com/Xueyh1/FSBLUP/blob/babc8ea221664412de7deca3cdb72833d61f018a/R/FSBLUP.R) · [论文](https://pmc.ncbi.nlm.nih.gov/articles/PMC12888590/) · [Additional file 3](https://pmc-oa-opendata.s3.amazonaws.com/PMC12888590.1/13059_2026_3931_MOESM3_ESM.pdf) · [论文归档](https://doi.org/10.5281/zenodo.17760713)
 
 ## 覆盖与数值定义
@@ -165,7 +167,7 @@ srun -n1 -c1 --mem=3G /usr/bin/time -v build/fsblup fit "${args[@]}" --alpha .2 
 srun -n1 -c1 --mem=3G /usr/bin/time -v build/fsblup fit "${args[@]}" --folds 5 --repeats 2 --seed 42 --out bench/auto
 ```
 
-## 发布复验
+## 0.2.0 发布复验
 
 构建与打包命令见 README。解包后 `bin/fsblup` 通过相对 RPATH 找到 `lib/` 下的 libopenblasp.so.0、libstdc++.so.6、libgcc_s.so.1、libgfortran.so.5、libquadmath.so.0。系统提供动态加载器、libc 和 libm。包中附有 `linked-libraries.txt`。使用 Ubuntu Base 22.04.5 amd64 的独立只读根文件系统，Bubblewrap 隔离宿主库、R、环境变量与网络，运行 build、固定权重 fit、带搜索的 fit 和真实不定的二个体 nearPD fuse。脚本检查 K 的四个元素与二阶解析解，并检查 pd.tsv 的投影动作、两次迭代、收敛标记与正的最小特征值。根文件系统的 glibc 是 2.35，发布基线主机的 glibc 是 2.34。
 

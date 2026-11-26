@@ -1,0 +1,4 @@
+binary	G_call	O_call
+build-patched	dgemm	dgemm
+build-gram	dsyrk	dsyrk
+build-perf	dsyrk	dgemm

@@ -1,0 +1,133 @@
+# fsblup 0.3.0 性能与调试验收
+
+2026-11-26 在目标 Slurm 节点执行。公开起点为 `d3ba237ec5da3c19ac7fb7dd3684dcaf43fbe92c`，本地与远程 cpp 相同，工作树干净。校验附件清单后，仅应用一次通过 `git apply --check` 的主补丁（`fd818a7`）。全量对称 Gram 候选保存在独立试验提交 `71e7206`；生产实现根据实测尺寸选择计算路径。`7f85dd6` 引入权重并行和计算优化，`15aca56` 修复有限矩阵的极端值回环问题。[环境与提交记录](validation/perf/environment.txt) · [输入 SHA-256](validation/perf/inputs.sha256)
+
+## 哪些改动节省了时间
+
+官方输入为 A=1407、G=198、O=74，SNP 与表达量分别有 5000 个原始特征。下表为**单线程端到端墙钟秒**。两个 A/B 对照各自固定亲和性、文件与输出选项，预热一次，轮换运行五次取中位数。两批试验的主补丁时间分别列出，以便按批配对。节点使用共享 XFS，文本格式化和写入页缓存均计时。每次 CLI 关闭输出流、检查错误后发布结果目录。计时不含将页缓存强制刷到存储设备的耗时。
+
+| 场景 | 公开 0.2 → 主补丁 | 主补丁 → 本轮 |
+|---|---:|---:|
+| 官方原始 build，写出 A/G/O | 1.3955 → 0.4213 | 0.4096 → 0.3742 |
+| 官方固定 .2/.5，nearPD，写出 K_raw/K | 6.7693 → 4.7895 | 4.7899 → 4.4475 |
+| 同一固定拟合，仅输出预测与诊断 | 4.1632 → 4.1647 | 4.1756 → 3.8200 |
+
+主补丁将矩阵文本写出改为每行复用缓冲、17 位有效数字的 `to_chars`。这项收益集中在写大矩阵的任务。本轮 nearPD 融合时将保留的谱分量按列乘以特征值平方根，再做对称 rank-k 重构；连续保留的特征向量列只复制一次。Dykstra 更新、一次 jitter、严格相对谱阈值、无穷范数收敛、最终特征值下限、对角缩放与 Cholesky 检查沿用 0.2 的规则。配对试验中官方写核的峰值从 221468 降到 206352 KiB。[公开版对照](validation/perf/baseline-medians.tsv) · [构核补丁试验](validation/perf/build-variants-medians.tsv) · [本轮配对计时](validation/perf/final-paired-medians.tsv)
+
+**原始 G/O。** G 连续扫描每列并计数，只遍历一次来写入中心化剂量；非整数均值插补仍不计入整数基因型频数。O 使用连续列视图，顺序处理缺失、过滤与标准化。两层均按输入列次序串行压缩，保留计数由单个线程更新。输入 198×5000 的官方 G 采用 DSYRK，74×5000 的 O 保留 DGEMM 路径。切换条件为至少 96 个样本且至少 32 个保留特征，是本版经验阈值。ltrace 核验主补丁依次调用 DGEMM/DGEMM，独立试验为 DSYRK/DSYRK，本轮为 DSYRK/DGEMM。[实际调用](validation/perf/blas-calls.tsv) 独立试验的官方 G 阶段从 129.0 降到 125.8 ms，O 阶段从 68.9 增到 69.7 ms，均含文本读入。下面单独测 LP64 BLAS 乘法；DSYRK 包含补全另一三角，分块宽度为 256。每种形状五次中位数，单位为 ms。[逐次 Gram 计时与矩阵误差](validation/perf/gram.tsv)
+
+| 样本×特征 | DGEMM | 整块 DSYRK | 分块 DSYRK |
+|---|---:|---:|---:|
+| 24×17 | 0.0010 | 0.0030 | 0.0030 |
+| 74×5000 | 3.017 | 2.542 | 2.610 |
+| 198×5000 | 17.762 | 12.180 | 12.183 |
+| 513×1025 | 23.343 | 13.863 | 14.238 |
+
+整块 rank-k 在较大形状节省乘法时间，分块方案保留在基准工具中。官方 build 的总时间还包含读入、系谱递推和文本写出。生产目标使用通用 x86-64 编译选项、OpenBLAS 自带 CPU 调度与编译器常规向量化。GCC 报告列循环使用 16 字节向量，存在别名检查与标量余部。97×33、9 行与边界过滤用例覆盖非整倍数输入；另外构建关闭编译器向量化的二进制，并在同一台机器上指定 OpenBLAS NEHALEM 后端完成测试。未使用全局 fast-math。[编译器报告](validation/perf/vectorized.txt)
+
+## 线程扩展
+
+Xeon Silver 4216，2 个插槽，每个 16 个物理核，SMT2。一次 Slurm 分配包含 16 个逻辑 CPU，工具读取 sysfs 的插槽与 core_id，仅使用每个物理核的第一个可用逻辑 CPU。每个线程数始终绑定相同的 CPU 前缀。五次正式运行按轮换、反序交错安排，前置的第 0 轮计为预热。下表为中位数秒；逐配置的实测范围、峰值 RSS（KiB）、输出字节数、CPU 列表、实际 OpenBLAS 设置及权重工作者数均已记录。小程序的启动、共享库和分配器也计入进程 RSS。[逐配置完整结果](validation/perf/final-suite-medians.tsv) · [逐次结果](validation/perf/final-suite-runs.tsv)
+
+| 工作负载 | 并行层 | 1 | 2 | 4 | 8 |
+|---|---|---:|---:|---:|---:|
+| 完整原始 build | BLAS | 0.3743 | 0.3730 | 0.3750 | 0.4058 |
+| 同尺寸仅需 jitter，写核 | BLAS | 1.0572 | 1.0278 | 1.0251 | 1.0068 |
+| 官方 .2/.5 实际投影，写核 | BLAS | 4.5244 | 3.1100 | 2.4091 | 2.1886 |
+| 官方 .2/.5 实际投影，关闭写核 | BLAS | 3.8677 | 2.4705 | 1.7561 | 1.5083 |
+| 30 个体，自动选权 | BLAS | 0.0257 | 0.0256 | 0.0256 | 0.2287 |
+| 30 个体，自动选权 | 权重 | 0.0257 | 0.0172 | 0.0119 | 0.0109 |
+| 192 个体，自动选权 | BLAS | 0.5171 | 0.5135 | 0.5117 | 0.9281 |
+| 192 个体，自动选权 | 权重 | 0.5167 | 0.3257 | 0.2189 | 0.1933 |
+
+**阶段计时。** 单线程官方 build 的 SNP 读取、预处理、Gram 分别为 69.8、5.89、11.89 ms；表达量分别为 64.1、1.61、1.71 ms。系谱阶段包含系谱文本读取和 A 递推。官方投影并写核时，1/8 线程的输出文件总量中位数分别为 82388839/82388080 B，峰值 RSS 为 206008/218604 KiB。单线程读核 0.326 s、nearPD 特征分解 2.881 s、重构 0.392 s、写核 0.657 s、最终 REML/BLUP 0.0075 s。8 线程对应的特征分解和重构为 0.890 和 0.091 s。显式整矩阵及保留列复制计时分别约 0.0180 和 0.0198 s，此项是其它计时的子集。nearPD_eigen 包含最终报告所需的最小特征值分解。cv_fold_fit_sum 等字段是各候选的耗时之和，并行时可大于 search 阶段墙钟。perf 用户态 cycles 抽样 382 次，最高频符号为 OpenBLAS 的 dgemm_kernel_SKYLAKEX，约 41%；LAPACK 分解内部也会调用该内核。[采样](validation/perf/profile-top.txt) · [计数器](validation/perf/debug/perf-stat.txt)
+
+**并发与内存。** 默认 `--threads` 继续控制 OpenBLAS。显式 `--parallel weights` 在进入搜索前将 BLAS 固定为 1；主线程参与计算。初始网格和每一轮细化分别去重、分配独立结果槽、等待全部任务，然后按串行次序归并。并列容差 1e−12、停止阈值 1e−4，与全群回退顺序沿用基线。C 模式在构造 FusionPlan 时完成条件块分解并保留准备错误；工作线程通过 const 接口共享计划，各候选独享 K、谱分解、求解器和诊断数据。失败原因保存在该候选自己的槽位。
+
+外层并行的稠密工作区估算中，共享部分为完整三层输入、每个参考个体平方 64 字节、设计矩阵及 1 MiB 预留；每个工作者按每个参考个体平方 192 字节、设计空间及 9 MiB BLAS/线程缓冲预留。候选总数最多 15，细化轮最多 4。22 MiB 回归用例将 8 工作者请求降为 2，5 MiB 用例明确失败。估算用于选择并发数，Slurm 限制整个进程。中等数据固定种子 4127，A/G/O=192/128/64，177 个参考，三种覆盖组各 59 个，固定三折。8 个权重工作者的峰值 RSS 为 53444 KiB，单工作者为 21304 KiB。该路径为显式选项。8 线程内层 BLAS 在小样本上离散度较大，30 个体范围为 0.0260–0.2471 s，中等数据为 0.5101–3.8978 s。在另一组固定 CPU 上做同条件交错复测，30 个体 8 线程内层 BLAS 的主补丁中位数为 0.185 s（0.054–0.247），本轮为 0.227 s（0.168–0.245）。两者均在搜索与最终融合阶段出现明显波动；12 次小样本拟合的 8 线程 cycles 抽样中，6.71% 直接落入 OpenBLAS 的 exec_blas_async_wait，大部分其它热点也位于 BLAS 库内。该现象在主补丁上也可复现。外层调参让单次小矩阵操作固定使用 BLAS=1。[小样本复测](validation/perf/check8-nested.tsv) · [中等规模复测](validation/perf/check8-medium.tsv)
+
+**完整官方 15 点固定权重。** 每轮启动 15 个独立 fit，使用相同的 178/20 遮蔽文件，关闭写核。表中时间为一整轮各进程墙钟之和，峰值 RSS 为轮内最大值。四档线程的所有权重均完成两次迭代的实际投影。该表衡量固定权重的全群构核与拟合开销；自动选权的折表与结果见上面的嵌套搜索。
+
+| BLAS 线程 | 中位 s | 五次范围 s | 加速比 | 峰值 RSS 中位 KiB | 输出字节中位数 |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 57.969 | 57.799–58.039 | 1.00 | 206224 | 183200 |
+| 2 | 37.019 | 36.829–37.130 | 1.57 | 208744 | 183114 |
+| 4 | 26.350 | 26.277–28.863 | 2.20 | 210956 | 183098 |
+| 8 | 23.860 | 22.573–26.289 | 2.43 | 219624 | 183257 |
+
+[逐权重、逐轮分阶段数据](validation/perf/grid-weight-runs.tsv) · [逐点修正幅度](validation/perf/grid-audit.tsv) · [网格汇总](validation/perf/grid-medians.tsv)
+
+## 严格调试和数值回归
+
+| 复现输入 | 根因与处理 | 回归 |
+|---|---|---|
+| 4×4 核，忽略 SIGXFSZ，RLIMIT_FSIZE=96 B | 公开版在最终缓冲写失败时返回 0，原本 347 B 的 K.tsv 只保留 96 B，最后一行截断。主补丁显式 close、传播文件名和错误；发布前移除失败临时目录 | output_failure 分别限制元数据、矩阵与预测文件，并验证现有空目录 |
+| 相同文件限额，SIGXFSZ 保持 Linux 默认处置 | 额外实测发现，已应用主补丁时进程仍可因信号 25 被终止，留下一个临时目录。CLI 入口现在让文件限额作为 EFBIG 进入受检写出路径；同用例退出 1，保留的临时目录数为 0 | output_failure 同时覆盖继承忽略和默认信号处置 |
+| 性状乘 1e200 / 1e−200 | 公开版成功写出 NaN 方差 / 零方差和负无穷目标值。主补丁在稳定尺度拟合，恢复单位时检验表示范围，两次复现均返回 1 | solver_range 验证可表示尺度及固定/自动拟合失败路径 |
+| 核心收到空折列表 | 公开版在读取 folds.front() 时产生 UBSan 空引用。主补丁先拒绝空集合 | core 检查候选记录的原因 |
+| 最小非零 double、接近最大值的方阵、负零和含引号的超长 ID | stod 的 ERANGE 会拒绝可表示的次正规数；对相等的大数先相加再除以二会溢出。补偿解析保留非零可表示的次正规数，极大矩阵采用安全对称平均 | io_limits 检查 12000 字符以上的带转义 ID、符号位、原始核和重读结果 |
+| 多线程首次构核、单任务失败、整轮失败、争用输出目录 | C 计划改为预构造；每轮等待工作者结束，按预先分配的槽位归并，成功目录整体发布 | concurrent_replay、repeated_lifetime、numerical_cli 覆盖预算降级、并列、异常展开、全群回退和临时目录回收 |
+
+Release、`-O1 -g` 的 ASan+UBSan、独立 TSan 均运行全部 11 项 CTest。ASan 开启 LSan，UBSan 禁止恢复，TSan 遇错停止。阳性泄漏对照故意遗失 79 B，LSan 和 Memcheck 分别以 1、99 退出；竞态对照由 TSan 报告两个工作线程中对同一内存的冲突访问并以 66 退出。对应阴性对照均为 0。系统 OpenBLAS/LAPACK 是发布库，TSan 观测范围包括被插桩的项目代码与其可见同步操作。[控制对照](validation/perf/debug/controls.tsv) · [Release](validation/perf/debug/Release.txt) · [ASan+UBSan](validation/perf/debug/ASan-UBSan.txt) · [TSan](validation/perf/debug/TSan.txt)
+
+Memcheck 开启完整泄漏、全部泄漏类型、来源跟踪以及错误退出码 99。对 raw build、SPD fuse、固定 fit、实际 nearPD、strict 拒绝、外层搜索、短写和同进程混合循环逐项核对应用退出码。8 条路径 errors、definitely/indirectly/possibly lost、still reachable 全部为 0。应用拒绝与短写的预期退出码为 1。另将全部 11 项 CTest 调用的原生程序逐个置于 Memcheck 下，11/11 通过。首轮 32 B 短写测试触发了 Valgrind 自己的 vgdb 共享文件限制（48 B），关闭调试器通信 `--vgdb=no` 后按原测试限额重跑整套通过。[Memcheck 全套记录](validation/perf/debug/Memcheck-CTest.txt) [Memcheck 各项字节数](validation/perf/debug/mem-final.tsv)
+
+单进程预热 6 轮，再运行 1000 轮原始 G/O、投影、BLUP、成功/失败搜索和异常写文件。每 10 轮记录 glibc 活跃分配量（uordblks+hblkhd）、smaps_rollup 的 RSS/PSS、FD 和任务数。该次运行中活跃分配从 117184 B 到 121680 B，最后 200 轮各采样点相同；RSS 从 18432 到 18456 KiB，最后 200 轮 PSS 为 12146 KiB。每次取样均为 4 FD、1 个线程。进程正常退出后 Memcheck 报告所有堆块释放。RSS/PSS 含共享库映射及分配器保留页。异常退出测试覆盖 C++ 异常和 I/O 错误；操作系统强行终止进程时可能留下带 PID 的临时目录。[生命周期记录](validation/perf/repeated.tsv)
+
+**独立数值对照。** R 4.4.1、Matrix 1.7-0、rrBLUP 4.6.3 重新构造完整官方核及 178/20 的固定遮蔽参考。1、2、4、8 线程逐一核验。四档中最大的修正 K 元素差为 5.98e−14、相对 Frobenius 差 5.24e−14；u/yhat 最大差分别为 5.92e−6 / 5.66e−6。同 R 的 λ 下显式 GLS 最大差 <3e−13。Vu、Ve、λ 和截距最大差分别为 3.22e−5、2.46e−5、4.04e−6、2.74e−7。四档均投影两次迭代后收敛，以 S=K_raw+1e−6 I 为基准的相对修正约为 8.55089%。20 个候选按 u 排序与 R 完全一致。
+
+原始 A/G/O 对归档数据按两轴 ID 比较的最大绝对差分别为 5.11e−15、1.33e−14、8.44e−15。嵌套 30 个体的两种并行层、全部线程数均选 (.75,.25)，18 个候选的三折与均值对独立 R 的最大差为 3.26e−8。外层工作者与 BLAS=1 串行路径的输出核、预测、模型、折表和搜索轨迹逐字节相同。小矩阵测试含 FPKM 恰好 95%、常数列、50% 缺失、非整数插补与 p/q 计数、A22/A44 奇异、重根及谱阈值处的特征值。[逐线程验证](validation/perf/thread-validation.tsv) · [1 线程官方详细对照](validation/perf/official-1.json) · [8 线程](validation/perf/official-8.json)
+
+## 复现
+
+在 cpp 目录按 README 安装独立 Armadillo 头文件，使用带 LAPACK 的 LP64 OpenBLAS。下面假设 `ARM_INC` 指向包含 armadillo 文件的目录，`d` 指向经 SHA-256 核验的官方解包目录。工作目录使用新名字。日常 CTest 仅需 Python 标准库，额外的性能数据生成和独立 R 比较使用 NumPy/pandas。
+
+```bash
+export ARM_INC="$PWD/.deps/usr/include" OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
+d=example-input
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DARMADILLO_INCLUDE_DIR="$ARM_INC" -DBUILD_TESTING=ON
+srun -n1 -c4 --mem=6G cmake --build build -j4
+srun -n1 -c4 --mem=3G ctest --test-dir build --output-on-failure
+Rscript --vanilla tests/nearpd_generate.R tests/nearpd_cases.tsv
+Rscript --vanilla tools/nearpd_official.R "$d" reference
+srun -n1 -c16 --cpu-bind=cores --mem=6G python3 tools/nearpd_bench.py build/fsblup "$d" reference/masked.tsv bench-suite --scenario suite --parallel both --threads 1,2,4,8
+srun -n1 -c16 --cpu-bind=cores --mem=6G python3 tools/nearpd_bench.py build/fsblup "$d" reference/masked.tsv bench-grid --scenario grid --threads 1,2,4,8
+srun -n1 -c16 --cpu-bind=cores --mem=5G python3 tools/verify_threads.py build/fsblup "$d" reference verify
+# 配对比较可在同一 bench 命令追加 --variant patch=/absolute/path/to/patched/fsblup
+g++ -O3 -std=c++17 -I/usr/include/openblas tools/gram_bench.cpp -lopenblasp -o /tmp/fsblup-gram-bench
+srun -n1 -c1 --cpu-bind=cores /tmp/fsblup-gram-bench
+```
+
+```bash
+export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 TSAN_OPTIONS=halt_on_error=1
+for tool in san tsan mem; do
+  cxx=clang++
+  case "$tool" in
+    san) flags="-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all" ;;
+    tsan) flags="-O1 -g -fno-omit-frame-pointer -fsanitize=thread" ;;
+    mem) cxx=g++; flags="-O1 -g -gdwarf-4 -fno-omit-frame-pointer" ;;
+  esac
+  cmake -S . -B "build-$tool" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER="$cxx" \
+    "-DCMAKE_CXX_FLAGS_DEBUG=$flags" -DARMADILLO_INCLUDE_DIR="$ARM_INC" -DBUILD_TESTING=ON
+  srun -n1 -c4 --mem=8G cmake --build "build-$tool" -j4
+  srun -n1 -c4 --mem=4G ctest --test-dir "build-$tool" --output-on-failure
+done
+srun -n1 -c4 --mem=2G tools/debug/controls.sh detector-controls
+srun -n1 -c4 --mem=4G python3 tools/debug/memcheck.py build-mem memcheck-cases
+srun -n1 -c4 --mem=4G python3 tools/debug/memcheck_ctest.py build-mem memcheck-ctest
+srun -n1 -c4 --mem=2G build/repeat_test 1000
+```
+
+在目标 CentOS Stream 9（glibc 2.34）打包。用 Red Hat 官方 UBI 9 Minimal 的只读根文件系统隔离宿主 R、库和网络；根文件系统 glibc 同为 2.34。冒烟测试覆盖 build、固定 fit、折表搜索、真实不定核的 nearPD 解析解，以及 4 个权重工作者的嵌套拟合和 .75/.25 权重。共享宿主内核。发布包还在该根文件系统内按完整官方 1407×1407 输入执行固定拟合，再在外部按 ID 和 R 对照，修正 K 最大差 5.98e−14，u/yhat 最大差 4.99e−6 / 4.78e−6。[干净环境数值记录](validation/perf/clean-vs-R.json) 文件大小信号策略在计时器启动前设置。解包命令和镜像层内容摘要固定如下。
+
+```bash
+layer=42dd82cfea990337e85629f4800f64d42e5fca052db254cd3386d99051476958
+curl -fL "https://registry.access.redhat.com/v2/ubi9/ubi-minimal/blobs/sha256:$layer" -o ubi9-layer.tar.gz
+echo "$layer  ubi9-layer.tar.gz" | sha256sum -c -
+mkdir ubi9-root
+tar -xzf ubi9-layer.tar.gz -C ubi9-root --no-same-owner --exclude='dev/*'
+tools/package.sh build dist
+srun -n1 -c8 --cpu-bind=cores --mem=2G tools/clean-smoke.sh ubi9-root \
+  dist/fsblup-0.3.0-linux-x86_64-glibc2.34.tar.gz clean-0.3.0 "$d" reference/masked.tsv
+python3 tools/nearpd_compare.py reference clean-0.3.0/official
+```

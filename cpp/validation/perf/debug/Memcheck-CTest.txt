@@ -1,0 +1,28 @@
+Internal ctest changing into directory: cpp/runs/perf/mem-ctest-release
+Test project cpp/runs/perf/mem-ctest-release
+      Start  1: core
+      Start  2: numerical_cli
+ 1/11 Test  #1: core .............................   Passed    4.01 sec
+      Start  3: solver_shift
+ 2/11 Test  #3: solver_shift .....................   Passed    5.60 sec
+      Start  4: nearpd_core
+ 3/11 Test  #4: nearpd_core ......................   Passed    2.20 sec
+      Start  5: nearpd_cli
+ 4/11 Test  #5: nearpd_cli .......................   Passed   35.46 sec
+      Start  6: nearpd_nested
+ 5/11 Test  #6: nearpd_nested ....................   Passed    4.31 sec
+      Start  7: output_failure
+ 6/11 Test  #7: output_failure ...................   Passed   11.81 sec
+      Start  8: solver_range
+ 7/11 Test  #8: solver_range .....................   Passed   16.69 sec
+      Start  9: io_limits
+ 8/11 Test  #2: numerical_cli ....................   Passed   81.80 sec
+      Start 10: concurrent_replay
+ 9/11 Test  #9: io_limits ........................   Passed    2.11 sec
+      Start 11: repeated_lifetime
+10/11 Test #11: repeated_lifetime ................   Passed    4.22 sec
+11/11 Test #10: concurrent_replay ................   Passed   37.48 sec
+
+100% tests passed, 0 tests failed out of 11
+
+Total Test time (real) = 119.28 sec

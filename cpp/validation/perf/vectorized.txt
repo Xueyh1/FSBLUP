@@ -1,0 +1,7 @@
+src/kernels.cpp:126:26: optimized:  loop versioned for vectorization because of possible aliasing
+src/kernels.cpp:126:26: optimized: loop vectorized using 16 byte vectors
+src/kernels.cpp:182:15: optimized: basic block part vectorized using 16 byte vectors
+src/kernels.cpp:230:23: optimized: basic block part vectorized using 16 byte vectors
+src/kernels.cpp:331:24: optimized: basic block part vectorized using 16 byte vectors
+src/kernels.cpp:35:35: optimized: basic block part vectorized using 16 byte vectors
+src/kernels.cpp:381:22: optimized: basic block part vectorized using 16 byte vectors

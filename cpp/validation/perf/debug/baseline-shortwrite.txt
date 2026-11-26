@@ -1,0 +1,4 @@
+normal exit 0 final_exists True K.tsv_bytes 347 stderr
+K.tsv rows including header 5 last row complete True
+limited exit 0 final_exists True K.tsv_bytes 96 stderr
+K.tsv rows including header 3 last row complete False

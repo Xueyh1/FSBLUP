@@ -1,0 +1,2 @@
+/opt/rh/gcc-toolset-15/root//usr/lib/gcc/x86_64-redhat-linux/15/../../../../include/c++/15/bits/stl_iterator.h:1090:16: runtime error: reference binding to null pointer of type 'const fsb::Fold'
+SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior /opt/rh/gcc-toolset-15/root//usr/lib/gcc/x86_64-redhat-linux/15/../../../../include/c++/15/bits/stl_iterator.h:1090:16

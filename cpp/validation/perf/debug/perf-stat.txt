@@ -1,0 +1,14 @@
+# started on Thu Nov 26 21:06:54 2026
+
+
+ Performance counter stats for 'runs/perf/measured fit --A /tmp/fsblup-method/example/test_matA.csv --G /tmp/fsblup-method/example/test_matG.csv --O /tmp/fsblup-method/example/test_matO.csv --pheno runs/nearpd/R/masked.tsv --id id --trait age --alpha .2 --beta .5 --pd-policy nearPD --out runs/perf/profile-fit':
+
+        6764282059      cycles:u                         #    1.737 GHz
+       11483451021      instructions:u                   #    1.70  insn per cycle
+           3893.20 msec task-clock:u                     #    1.000 CPUs utilized
+                 0      context-switches:u               #    0.000 /sec
+
+       3.893876757 seconds time elapsed
+
+       3.818151000 seconds user
+       0.055425000 seconds sys
