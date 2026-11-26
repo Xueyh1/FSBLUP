@@ -2,3 +2,4 @@
 /dist/
 /runs/
 /.deps/
+__pycache__/

@@ -26,7 +26,8 @@ struct Options {
       if (cmd == "fit")
         allowed.insert({"pheno", "id", "trait", "folds", "repeats", "seed",
                         "folds-file", "year", "ngen", "metric", "score-col",
-                        "covar", "factor", "strict-simplex", "write-k"});
+                        "parallel", "covar", "factor", "strict-simplex",
+                        "write-k"});
       else
         require(cmd == "fuse", "unknown subcommand: " + cmd);
     }
@@ -50,6 +51,7 @@ using Clock = std::chrono::steady_clock;
 struct Timing {
   Clock::time_point start = Clock::now(), last = start;
   std::vector<std::pair<string, double>> times;
+  size_t weight_workers = 1;
   void mark(string stage) {
     auto now = Clock::now();
     times.emplace_back(stage,
@@ -65,10 +67,11 @@ struct Timing {
     struct rusage usage{};
     getrusage(RUSAGE_SELF, &usage);
     write_file(dir / "runtime.tsv", [&](std::ostream &g) {
-      g << "blas\tthreads\tpeak_rss_kib\twall_seconds\n"
+      g << "blas\tthreads\tpeak_rss_kib\twall_seconds\tweight_workers\n"
         << openblas_get_config() << '\t' << openblas_get_num_threads() << '\t'
         << usage.ru_maxrss << '\t'
-        << std::chrono::duration<double>(Clock::now() - start).count() << '\n';
+        << std::chrono::duration<double>(Clock::now() - start).count() << '\t'
+        << weight_workers << '\n';
     });
   }
 };

@@ -1,4 +1,5 @@
 #pragma once
+#include "near_pd.hpp"
 #include <armadillo>
 #include <filesystem>
 #include <functional>
@@ -54,10 +55,12 @@ enum class PdPolicy { strict, near_pd };
 // reports the exact minimum eigenvalue of each projected block after rescaling.
 enum class PdDiagnostics { full, tuning };
 struct PdBlock {
+
   string block;
   bool projected = false;
   int iterations = 0;
   double min_raw = NAN, min_used = NAN, rel_tol = NAN;
+  PdTimes timing;
   double norm_f = 0., relative_norm_f = 0., max_abs_change = 0.;
 };
 struct Fusion {
@@ -69,12 +72,11 @@ struct Fusion {
 // plan.
 class FusionPlan {
 public:
-  explicit FusionPlan(const Layers &layers)
-      : layers_(layers), mode_(layers.mode()) {}
+  explicit FusionPlan(const Layers &layers);
   FusionPlan(Layers &&) = delete;
   Fusion combine(double alpha, double beta, BlockAudit *audit = nullptr,
                  PdPolicy policy = PdPolicy::strict,
-                 PdDiagnostics diagnostics = PdDiagnostics::full);
+                 PdDiagnostics diagnostics = PdDiagnostics::full) const;
 
 private:
   struct Nested {
@@ -85,11 +87,13 @@ private:
   const Layers &layers_;
   string mode_;
   std::optional<Nested> nested_;
+  std::string preparation_error_;
 };
 Fusion fuse(const Layers &, double alpha, double beta,
             BlockAudit *audit = nullptr, PdPolicy policy = PdPolicy::strict,
             PdDiagnostics diagnostics = PdDiagnostics::full);
 struct Features {
+  double gram_seconds = 0;
   mat k;
   size_t kept = 0, filtered = 0, constant = 0, imputed = 0;
 };
@@ -117,11 +121,13 @@ struct Evaluation {
   double value = NAN;
   string reason, correction;
   std::vector<double> scores;
+  double fold_seconds = 0;
+  PdTimes timing;
   size_t nearpd_blocks = 0;
   double max_relative_norm_f = 0.;
 };
-Evaluation evaluate_weight(FusionPlan &plan, double a, double b, const mat &x,
-                           const vec &y, const vec &truth,
+Evaluation evaluate_weight(const FusionPlan &plan, double a, double b,
+                           const mat &x, const vec &y, const vec &truth,
                            const std::vector<Fold> &folds, const string &metric,
                            PdPolicy policy = PdPolicy::strict);
 struct Trial {
@@ -135,5 +141,6 @@ struct Search {
   string stop;
 };
 Search search(bool strict, bool minimize,
-              const std::function<Evaluation(double, double)> &evaluate);
+              const std::function<Evaluation(double, double)> &evaluate,
+              size_t workers = 1);
 } // namespace fsb

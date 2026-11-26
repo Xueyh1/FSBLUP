@@ -1,5 +1,6 @@
 #include "core.hpp"
 #include "near_pd.hpp"
+#include <chrono>
 #include <queue>
 namespace fsb {
 Kernel pedigree(const Ids &ids, const Ids &sire, const Ids &dam, double cap) {
@@ -58,54 +59,87 @@ Kernel pedigree(const Ids &ids, const Ids &sire, const Ids &dam, double cap) {
   require(done.size() == n, "cycle in pedigree");
   return {all, std::move(a)};
 }
+namespace {
+void feature_gram(mat &x, Features &out, double denominator) {
+  auto start = std::chrono::steady_clock::now();
+  if (x.n_rows >= 96 && out.kept >= 32) {
+    // Compact columns occupy the prefix of x. An identical dense operand
+    // lets Armadillo dispatch symmetric rank-k without copying a subview.
+    mat retained(x.memptr(), x.n_rows, out.kept, false, true);
+    out.k = retained * retained.t();
+    out.k /= denominator;
+  } else {
+    auto retained = x.head_cols(out.kept);
+    out.k = retained * retained.t() / denominator;
+  }
+  out.gram_seconds =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
+          .count();
+}
+} // namespace
 Features genomic(mat x) {
   Features out;
   double denom = 0;
   for (size_t j = 0; j < x.n_cols; ++j) {
-    vec v = x.col(j);
-    v.replace(-9, arma::datum::nan);
-    auto valid = arma::find_finite(v).eval();
-    require(!valid.empty() || v.has_nan(), "invalid genotype");
-    for (auto i : valid)
-      require(v[i] == 0 || v[i] == 1 || v[i] == 2,
-              "genotypes must be 0, 1, 2, NA or -9");
-    if (valid.n_elem * 2 < v.n_elem) {
+    const double *src = x.colptr(j);
+    size_t count[3] = {}, miss = 0;
+    for (size_t i = 0; i < x.n_rows; ++i) {
+      double v = src[i];
+      if (std::isnan(v) || v == -9)
+        ++miss;
+      else if (v == 0 || v == 1 || v == 2)
+        ++count[static_cast<int>(v)];
+      else
+        throw std::runtime_error("genotypes must be 0, 1, 2, NA or -9");
+    }
+    if (miss > x.n_rows / 2) {
       ++out.filtered;
       continue;
     }
-    out.imputed += v.n_elem - valid.n_elem;
-    v.replace(arma::datum::nan, arma::mean(v.elem(valid)));
-    double het = arma::accu(v == 1);
-    double p = (2 * arma::accu(v == 2) + het) / (2 * v.n_elem),
-           q = (2 * arma::accu(v == 0) + het) / (2 * v.n_elem);
+    double mean = (2. * count[2] + count[1]) / (x.n_rows - miss);
+    if (mean == 0 || mean == 1 || mean == 2)
+      count[static_cast<int>(mean)] += miss;
+    double p = (2. * count[2] + count[1]) / (2 * x.n_rows),
+           q = (2. * count[0] + count[1]) / (2 * x.n_rows);
     denom += 2 * p * q;
-    x.col(out.kept++) = v - 2 * p;
+    out.imputed += miss;
+    double *dest = x.colptr(out.kept++);
+    for (size_t i = 0; i < x.n_rows; ++i) {
+      const double v = src[i];
+      dest[i] = ((std::isnan(v) || v == -9) ? mean : v) - 2 * p;
+    }
   }
   require(out.kept && denom > 0, "no usable genomic denominator");
-  auto w = x.head_cols(out.kept);
-  out.k = w * w.t() / denom;
+  feature_gram(x, out, denom);
   return out;
 }
 Features omics(mat x, bool fpkm) {
   require(x.n_rows >= 2, "omics requires at least two samples");
   Features out;
   for (size_t j = 0; j < x.n_cols; ++j) {
-    vec v = x.col(j);
-    out.imputed += arma::find_nonfinite(v).eval().n_elem;
-    v.replace(arma::datum::nan, 0);
-    if (fpkm && arma::accu(v < 0.1) * 100 >= 95 * v.n_elem) {
+    vec v(x.colptr(j), x.n_rows, false, true);
+    size_t low = 0;
+    for (double &value : v) {
+      if (std::isnan(value)) {
+        value = 0;
+        ++out.imputed;
+      } else if (!std::isfinite(value))
+        throw std::runtime_error("nonfinite omics feature");
+      low += value < .1;
+    }
+    if (fpkm && low * 100 >= 95 * v.n_elem) {
       ++out.filtered;
       continue;
     }
-    if (v.max() == v.min()) {
+    if (v.min() == v.max()) {
       ++out.constant;
       continue;
     }
-    x.col(out.kept++) = (v - arma::mean(v)) / arma::stddev(v);
+    double mean = arma::mean(v), sd = arma::stddev(v);
+    x.col(out.kept++) = (v - mean) / sd;
   }
   require(out.kept > 0, "no remaining omics features");
-  auto w = x.head_cols(out.kept);
-  out.k = w * w.t() / out.kept;
+  feature_gram(x, out, out.kept);
   return out;
 }
 string Layers::counts() const {
@@ -183,6 +217,7 @@ mat adjusted(const mat &raw, string &note, PdPolicy policy,
                                   " iterations");
     require(cholesky_succeeds(result.matrix),
             d.block + ": nearPD output failed Cholesky");
+    d.timing = result.timing;
     d.projected = true;
     d.iterations = result.iterations;
     d.rel_tol = result.rel_tol;
@@ -190,7 +225,11 @@ mat adjusted(const mat &raw, string &note, PdPolicy policy,
     d.norm_f = result.norm_f;
     d.relative_norm_f = d.norm_f / arma::norm(k, "fro");
     if (diagnostics == PdDiagnostics::full) {
+      auto start = std::chrono::steady_clock::now();
       d.min_used = arma::eig_sym(result.matrix).min();
+      d.timing.eigen += std::chrono::duration<double>(
+                            std::chrono::steady_clock::now() - start)
+                            .count();
       d.max_abs_change = arma::abs(result.matrix - k).max();
     }
     note += "jitter=1e-6,nearPD";
@@ -234,8 +273,18 @@ FusionPlan::Nested::Nested(const Layers &l) {
   r24 = regression(a.submat(g, s), lower44);
   k12 = regression(a.submat(u, g), factor_block(a.submat(g, g), "A22")) * g22;
 }
+FusionPlan::FusionPlan(const Layers &layers)
+    : layers_(layers), mode_(layers.mode()) {
+  if (mode_ == "C") {
+    try {
+      nested_.emplace(layers);
+    } catch (const std::runtime_error &e) {
+      preparation_error_ = e.what();
+    }
+  }
+}
 Fusion FusionPlan::combine(double alpha, double beta, BlockAudit *audit,
-                           PdPolicy policy, PdDiagnostics diagnostics) {
+                           PdPolicy policy, PdDiagnostics diagnostics) const {
   const Layers &l = layers_;
   const mat &a = l.a.values;
   const string &mode = mode_;
@@ -294,8 +343,8 @@ Fusion FusionPlan::combine(double alpha, double beta, BlockAudit *audit,
   } else {
     // Equation 3 with group 3 empty. Groups 1/2/4: pedigree only,
     // genotyped only, and jointly observed. All regressions use original A.
-    if (!nested_)
-      nested_.emplace(l);
+    if (!preparation_error_.empty())
+      throw std::runtime_error(preparation_error_);
     const auto &[u, g, s, a44, g44, g22, r14, r24, k12] = *nested_;
     mat c = alpha * l.o.values + beta * g44 + (1 - alpha - beta) * a44;
     raw = a;

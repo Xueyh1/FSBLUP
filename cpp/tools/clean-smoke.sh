@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Arguments: unpacked Ubuntu base filesystem, release tar.gz, new results directory.
+# Arguments: unpacked minimal Linux root filesystem, release tar.gz, new results directory.
 base=$(realpath "$1")
 archive=$(realpath "$2")
 mkdir "$3"
@@ -39,6 +39,13 @@ bwrap --unshare-all --die-with-parent --clearenv --setenv PATH /usr/bin:/bin \
       NR==2 {ok1=(($2-d)^2+($3-o)^2 < 1e-22)}
       NR==3 {ok2=(($3-d)^2+($2-o)^2 < 1e-22)}
       END {exit !(NR==3 && ok1 && ok2)}'\'' /mnt/projected/K.tsv
+    nested=source/cpp/tests/nested
+    bin/fsblup fit --A "$nested/A.tsv" --G "$nested/G.tsv" --O "$nested/O.tsv" \
+      --pheno "$nested/pheno.tsv" --id ID --trait trait --folds-file "$nested/folds.tsv" \
+      --metric rmse --strict-simplex --pd-policy nearPD --parallel weights --threads 4 --out /mnt/outer
+    awk -F "\t" '\''NR==2 && $2==0.75 && $3==0.25 {ok=1} END {exit !ok}'\'' /mnt/outer/fusion.tsv
+    awk -F "\t" '\''NR==2 && $2==1 && $5==4 {ok=1} END {exit !ok}'\'' /mnt/outer/runtime.tsv
+    cat /mnt/outer/runtime.tsv /mnt/outer/fusion.tsv
     cat /mnt/projected/pd.tsv
     cat /mnt/fit/model.tsv /mnt/tuned/tuning.tsv
   ' | tee "$results/smoke.log"

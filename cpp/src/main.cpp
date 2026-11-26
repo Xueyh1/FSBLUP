@@ -1,13 +1,13 @@
 #include "cli.hpp"
 using namespace fsb;
 namespace {
-const char *help = R"(fsblup 0.2.0
+const char *help = R"(fsblup 0.3.0
   build --ped PED --snp SNP --omics OMICS [--omics-type generic|fpkm] --out DIR
   fuse --A A --G G --O O --alpha AWT --beta BWT --out DIR
   fit --pheno TABLE --id ID --trait TRAIT --A A --G G --O O --out DIR
       [--alpha AWT --beta BWT | --folds N --repeats N --seed N | --folds-file FILE
        | --year CUTOFF | --ngen CUTOFF] [--metric cor|rmse|auc] [--score-col COL]
-      [--covar COL,...] [--factor COL,...] [--strict-simplex] [--write-k]
+      [--covar COL,...] [--factor COL,...] [--parallel blas|weights] [--strict-simplex] [--write-k]
   All commands accept --threads N (default 1) and --memory-mb N (dense estimate).
   fuse and fit accept --pd-policy strict|nearPD (default strict).
   Input tables have headers. Pedigree columns are ID,Sire,Dam (case-insensitive).
@@ -42,22 +42,26 @@ int main(int argc, char **argv) {
       return 0;
     }
     if (string(argv[1]) == "--version") {
-      std::cout << "fsblup 0.2.0\n";
+      std::cout << "fsblup 0.3.0\n";
       return 0;
     }
     string cmd = argv[1];
     Options opt(argc, argv, cmd);
     int threads = integer(opt.get("threads", "1"), 1);
-    openblas_set_num_threads(threads);
+    auto parallel = opt.get("parallel", "blas");
+    require(parallel == "blas" || parallel == "weights",
+            "--parallel requires blas or weights");
+    require(parallel != "weights" || !opt.has("alpha"),
+            "--parallel weights requires automatic tuning");
+    openblas_set_num_threads(parallel == "weights" ? 1 : threads);
     double cap = number(opt.get("memory-mb", "8192"));
     Destination dest(opt.get("out"));
     Timing tm;
     try {
       run(cmd, opt, dest.work, cap, tm);
     } catch (const TuningFailure &e) {
-      write_file(dest.work / "failure.txt", [&](std::ostream &f) {
-        f << e.what() << '\n';
-      });
+      write_file(dest.work / "failure.txt",
+                 [&](std::ostream &f) { f << e.what() << '\n'; });
       tm.mark("failed_search");
       tm.save(dest.work);
       dest.publish();

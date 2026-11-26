@@ -1,4 +1,6 @@
 #include "core.hpp"
+#include <chrono>
+#include <future>
 #include <random>
 namespace fsb {
 Labels random_labels(const Ids &ids, int folds, int repeats, unsigned seed) {
@@ -88,8 +90,8 @@ double score(const vec &truth, const vec &pred, const string &metric) {
   }
   return pairs / (neg * pos);
 }
-Evaluation evaluate_weight(FusionPlan &plan, double a, double b, const mat &x,
-                           const vec &y, const vec &truth,
+Evaluation evaluate_weight(const FusionPlan &plan, double a, double b,
+                           const mat &x, const vec &y, const vec &truth,
                            const std::vector<Fold> &folds, const string &metric,
                            PdPolicy policy) {
   Evaluation e;
@@ -100,6 +102,7 @@ Evaluation evaluate_weight(FusionPlan &plan, double a, double b, const mat &x,
     auto k = plan.combine(a, b, nullptr, policy, PdDiagnostics::tuning);
     e.correction = k.correction;
     for (const auto &block : k.pd_blocks) {
+      e.timing.add(block.timing);
       e.nearpd_blocks += block.projected;
       e.max_relative_norm_f =
           std::max(e.max_relative_norm_f, block.relative_norm_f);
@@ -112,8 +115,12 @@ Evaluation evaluate_weight(FusionPlan &plan, double a, double b, const mat &x,
         continue;
       location = "repeat " + std::to_string(f.repeat) + " fold " +
                  std::to_string(f.fold) + ": ";
+      auto tick = std::chrono::steady_clock::now();
       auto fit = solve(k.k, x, y, f.train);
       e.scores[j] = score(truth.elem(f.valid), fit.u.elem(f.valid), metric);
+      e.fold_seconds +=
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - tick)
+              .count();
       require(std::isfinite(e.scores[j]), "nonfinite validation score");
       sum += e.scores[j];
       ++count;
@@ -127,26 +134,55 @@ Evaluation evaluate_weight(FusionPlan &plan, double a, double b, const mat &x,
   return e;
 }
 Search search(bool strict, bool minimize,
-              const std::function<Evaluation(double, double)> &evaluate) {
+              const std::function<Evaluation(double, double)> &evaluate,
+              size_t workers) {
+  require(workers > 0, "invalid worker count");
   Search out;
-  std::set<std::pair<double, double>> seen;
-  auto visit = [&](string stage, double a, double b) {
-    if (!seen.emplace(a, b).second)
-      return;
-    Evaluation e = evaluate(a, b);
-    double v = e.value;
-    if (e.reason.empty() && std::isfinite(v) &&
-        (!std::isfinite(out.best) ||
-         (minimize ? v < out.best - 1e-12 : v > out.best + 1e-12))) {
-      out.alpha = a;
-      out.beta = b;
-      out.best = v;
+  using Point = std::pair<double, double>;
+  std::set<Point> seen;
+  std::vector<Point> batch;
+  auto enqueue = [&](double a, double b) {
+    if (seen.emplace(a, b).second)
+      batch.emplace_back(a, b);
+  };
+  auto run_batch = [&](const string &stage) {
+    // Join every task before reading any result or moving the refinement
+    // centre.
+    const size_t width = std::min(workers, batch.size());
+    std::vector<Evaluation> results(batch.size());
+    auto evaluate_stripe = [&](size_t start) {
+      for (size_t i = start; i < batch.size(); i += width)
+        results[i] = evaluate(batch[i].first, batch[i].second);
+    };
+    if (width <= 1)
+      evaluate_stripe(0);
+    else {
+      std::vector<std::future<void>> tasks;
+      for (size_t i = 1; i < width; ++i)
+        tasks.push_back(std::async(std::launch::async, evaluate_stripe, i));
+      evaluate_stripe(0);
+      for (auto &task : tasks)
+        task.get();
     }
-    out.trials.push_back({stage, a, b, std::move(e)});
+    for (size_t i = 0; i < batch.size(); ++i) {
+      auto [a, b] = batch[i];
+      auto &e = results[i];
+      double v = e.value;
+      if (e.reason.empty() && std::isfinite(v) &&
+          (!std::isfinite(out.best) ||
+           (minimize ? v < out.best - 1e-12 : v > out.best + 1e-12))) {
+        out.alpha = a;
+        out.beta = b;
+        out.best = v;
+      }
+      out.trials.push_back({stage, a, b, std::move(e)});
+    }
+    batch.clear();
   };
   for (int i = 0; i <= 4; ++i)
     for (int j = 0; j <= 4 - i; ++j)
-      visit("grid", i / 4., j / 4.);
+      enqueue(i / 4., j / 4.);
+  run_batch("grid");
   if (!std::isfinite(out.best)) {
     out.stop = "no eligible grid point";
     return out;
@@ -160,8 +196,9 @@ Search search(bool strict, bool minimize,
         double x = a + da, y = b + db;
         if (strict && (x < 0 || y < 0 || x + y > 1))
           continue;
-        visit("refine" + std::to_string(r), x, y);
+        enqueue(x, y);
       }
+    run_batch("refine" + std::to_string(r));
     if (std::abs(old - out.best) < 1e-4) {
       out.stop = "improvement < 1e-4";
       break;

@@ -57,8 +57,9 @@ void save_ids(const fs::path &p, const Ids &ids) {
   });
 }
 Kernel raw_features(const fs::path &p, bool snp, bool fpkm, double cap,
-                    Features &qc) {
+                    Features &qc, Timing &tm) {
   auto features = read_features(p, cap);
+  tm.mark(snp ? "read_snp" : "read_omics");
   qc = snp ? genomic(std::move(features.values))
            : omics(std::move(features.values), fpkm);
   return {std::move(features.ids), std::move(qc.k)};
@@ -74,18 +75,23 @@ void build(const Options &opt, const fs::path &dir, double cap, Timing &tm) {
   Features gq, oq;
   auto type = opt.get("omics-type", "generic");
   require(type == "generic" || type == "fpkm", "unknown omics type");
-  auto g = raw_features(opt.get("snp"), true, false, cap, gq);
+  auto g = raw_features(opt.get("snp"), true, false, cap, gq, tm);
   tm.mark("genomic");
-  auto o = raw_features(opt.get("omics"), false, type == "fpkm", cap, oq);
+  tm.times.emplace_back("G_preprocess",
+                        tm.times.back().second - gq.gram_seconds);
+  tm.times.emplace_back("G_gram", gq.gram_seconds);
+  auto o = raw_features(opt.get("omics"), false, type == "fpkm", cap, oq, tm);
   tm.mark("omics");
+  tm.times.emplace_back("O_preprocess",
+                        tm.times.back().second - oq.gram_seconds);
+  tm.times.emplace_back("O_gram", oq.gram_seconds);
   write_file(dir / "memory.tsv", [&](std::ostream &f) {
-    f
-        << "estimated_dense_mib\tlimit_mib\n"
-        << std::max(
-               {budget(a.ids.size(), 0, cap),
-                budget(g.ids.size(), gq.kept + gq.filtered, cap),
-                budget(o.ids.size(), oq.kept + oq.filtered + oq.constant, cap)})
-        << '\t' << cap << '\n';
+    f << "estimated_dense_mib\tlimit_mib\n"
+      << std::max(
+             {budget(a.ids.size(), 0, cap),
+              budget(g.ids.size(), gq.kept + gq.filtered, cap),
+              budget(o.ids.size(), oq.kept + oq.filtered + oq.constant, cap)})
+      << '\t' << cap << '\n';
   });
   write_file(dir / "qc.tsv", [&](std::ostream &q) {
     q << "layer\tsamples\tretained_features\tfiltered_features\tconstant_"
@@ -94,8 +100,8 @@ void build(const Options &opt, const fs::path &dir, double cap, Timing &tm) {
     for (auto item :
          {std::make_tuple("G", &g, &gq), std::make_tuple("O", &o, &oq)}) {
       auto [name, k, v] = item;
-      q << name << '\t' << k->ids.size() << '\t' << v->kept << '\t' << v->filtered
-        << '\t' << v->constant << '\t' << v->imputed << '\n';
+      q << name << '\t' << k->ids.size() << '\t' << v->kept << '\t'
+        << v->filtered << '\t' << v->constant << '\t' << v->imputed << '\n';
     }
   });
   for (auto item : {std::make_pair("A", &a), std::make_pair("G", &g),
@@ -112,8 +118,7 @@ void build(const Options &opt, const fs::path &dir, double cap, Timing &tm) {
     mode = "unsupported";
   }
   write_file(dir / "coverage.tsv", [&](std::ostream &f) {
-    f << "mode\tcounts\n"
-                                 << mode << '\t' << layers.counts() << '\n';
+    f << "mode\tcounts\n" << mode << '\t' << layers.counts() << '\n';
   });
   tm.mark("write");
 }
@@ -195,10 +200,33 @@ struct Tuning {
   string metric, coverage;
 };
 Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
-            const Layers &layers, const fs::path &dir, PdPolicy policy) {
+            const Layers &layers, const fs::path &dir, PdPolicy policy,
+            double cap, Timing &tm) {
   Ids refs;
   for (auto i : p.ref)
     refs.push_back(p.ids[i]);
+  if (opt.get("parallel", "blas") == "weights") {
+    // Dense shared layers/conditionals, design, output reserve; each private
+    // task includes full reference K, nearPD/LAPACK/REML scratch and
+    // BLAS/thread space.
+    double n = refs.size();
+    double shared = (8. * (layers.a.values.n_elem + layers.g.values.n_elem +
+                           layers.o.values.n_elem) +
+                     64. * n * n + 24. * p.x.n_elem) /
+                        1048576. +
+                    1;
+    double per = (192. * n * n + 24. * n * p.x.n_cols) / 1048576. + 9;
+    require(cap >= shared + per,
+            "--memory-mb insufficient for one candidate workspace");
+    int requested = std::min(15, integer(opt.get("threads", "1"), 1));
+    tm.weight_workers = static_cast<size_t>(
+        std::min(double(requested), std::floor((cap - shared) / per)));
+    write_file(dir / "worker_memory.tsv", [&](std::ostream &f) {
+      f << "shared_mib\tper_worker_mib\tworkers\testimated_mib\n"
+        << shared << '\t' << per << '\t' << tm.weight_workers << '\t'
+        << shared + tm.weight_workers * per << '\n';
+    });
+  }
   auto l = layers.subset(refs);
   const string mode = layers.mode();
   const bool identifiable =
@@ -240,11 +268,24 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
               << f.valid.n_elem << '\t' << f.reason << '\n';
   });
   FusionPlan reference(l);
-  auto result = search(opt.has("strict-simplex"), metric == "rmse",
-                       [&](double a, double b) {
-                         return evaluate_weight(reference, a, b, x, y, truth,
-                                                folds, metric, policy);
-                       });
+  auto result = search(
+      opt.has("strict-simplex"), metric == "rmse",
+      [&](double a, double b) {
+        return evaluate_weight(reference, a, b, x, y, truth, folds, metric,
+                               policy);
+      },
+      tm.weight_workers);
+  PdTimes pd;
+  double folds_s = 0;
+  for (const auto &t : result.trials) {
+    folds_s += t.result.fold_seconds;
+    pd.add(t.result.timing);
+  }
+  tm.times.emplace_back("cv_fold_fit_sum", folds_s);
+  tm.times.emplace_back("cv_copy_subset_sum", pd.copy);
+  tm.times.emplace_back("cv_eigen_sum", pd.eigen);
+  tm.times.emplace_back("cv_reconstruction_sum", pd.reconstruction);
+  tm.times.emplace_back("cv_matrix_work_sum", pd.matrix_work);
   Ids columns;
   for (const auto &f : folds)
     columns.push_back("r" + std::to_string(f.repeat) + "f" +
@@ -292,9 +333,10 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
     trace << "stage\talpha\tbeta\tmean\tvalid\treason\tcorrection";
     for (const auto &column : t.fold_columns)
       trace << '\t' << column;
-    trace << "\treference_best\tfull_status\tfull_reason\tpd_policy\tnearpd_"
-             "blocks\tmax_relative_normF\tfull_nearpd_blocks\tfull_max_relative_"
-             "normF\n";
+    trace
+        << "\treference_best\tfull_status\tfull_reason\tpd_policy\tnearpd_"
+           "blocks\tmax_relative_normF\tfull_nearpd_blocks\tfull_max_relative_"
+           "normF\n";
     for (size_t i = 0; i < count; ++i) {
       const auto &v = trials[i];
       const auto &e = v.result;
@@ -331,15 +373,14 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
         "no reference-eligible weights produced a valid full covariance; " +
         std::to_string(failures) + " rejected (see search.tsv)");
   write_file(dir / "tuning.tsv", [&](std::ostream &f) {
-    f
-        << "metric\tselection_score\tstop\tcoverage\treference_best_alpha"
-           "\treference_best_beta\treference_best_score\tselected_"
-           "alpha\tselected_beta"
-           "\tfull_rejections\n"
-        << t.metric << '\t' << trials[selected].result.value << '\t'
-        << result.stop << '\t' << field(t.coverage) << '\t' << result.alpha
-        << '\t' << result.beta << '\t' << result.best << '\t' << alpha << '\t'
-        << beta << '\t' << failures << '\n';
+    f << "metric\tselection_score\tstop\tcoverage\treference_best_alpha"
+         "\treference_best_beta\treference_best_score\tselected_"
+         "alpha\tselected_beta"
+         "\tfull_rejections\n"
+      << t.metric << '\t' << trials[selected].result.value << '\t'
+      << result.stop << '\t' << field(t.coverage) << '\t' << result.alpha
+      << '\t' << result.beta << '\t' << result.best << '\t' << alpha << '\t'
+      << beta << '\t' << failures << '\n';
   });
   return kernel;
 }
@@ -355,13 +396,11 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
            read_kernel(opt.get("O"), cap)};
   auto mode = l.mode();
   write_file(dir / "memory.tsv", [&](std::ostream &f) {
-    f
-        << "estimated_dense_mib\tlimit_mib\n"
-        << budget(l.a.ids.size(), 0, cap) << '\t' << cap << '\n';
+    f << "estimated_dense_mib\tlimit_mib\n"
+      << budget(l.a.ids.size(), 0, cap) << '\t' << cap << '\n';
   });
   write_file(dir / "coverage.tsv", [&](std::ostream &f) {
-    f << "mode\tcounts\n"
-                                 << mode << '\t' << l.counts() << '\n';
+    f << "mode\tcounts\n" << mode << '\t' << l.counts() << '\n';
   });
   tm.mark("read_kernels");
   bool fixed = opt.has("alpha");
@@ -387,7 +426,7 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
     positions(l.a.ids, p.ids);
     tm.mark("read_phenotype");
     if (!fixed) {
-      const auto tuning = tune(opt, t, p, l, dir, policy);
+      const auto tuning = tune(opt, t, p, l, dir, policy, cap, tm);
       tm.mark("search");
       k = select_fusion(tuning, l, dir, a, b, policy);
     }
@@ -396,11 +435,17 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
   if (fixed)
     k = fuse(l, a, b, nullptr, policy);
   tm.mark("fusion");
+  PdTimes pd;
+  for (const auto &b : k.pd_blocks)
+    pd.add(b.timing);
+  tm.times.emplace_back("nearPD_copy_subset", pd.copy);
+  tm.times.emplace_back("nearPD_eigen", pd.eigen);
+  tm.times.emplace_back("nearPD_reconstruction", pd.reconstruction);
+  tm.times.emplace_back("nearPD_matrix_work", pd.matrix_work);
   write_file(dir / "fusion.tsv", [&](std::ostream &f) {
-    f
-        << "mode\talpha\tbeta\tcorrection\tpd_policy\n"
-        << mode << '\t' << a << '\t' << b << '\t' << k.correction << '\t'
-        << policy_name(policy) << '\n';
+    f << "mode\talpha\tbeta\tcorrection\tpd_policy\n"
+      << mode << '\t' << a << '\t' << b << '\t' << k.correction << '\t'
+      << policy_name(policy) << '\n';
   });
   write_pd(dir, k, policy);
   if (cmd == "fuse" || opt.has("write-k")) {
@@ -417,8 +462,8 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
       f << "id\trole\tu\tyhat\n";
       for (size_t i = 0; i < p.ids.size(); ++i)
         f << field(p.ids[i]) << '\t'
-          << (std::isfinite(p.y[i]) ? "reference" : "candidate") << '\t' << m.u[i]
-          << '\t' << m.yhat[i] << '\n';
+          << (std::isfinite(p.y[i]) ? "reference" : "candidate") << '\t'
+          << m.u[i] << '\t' << m.yhat[i] << '\n';
     });
     write_file(dir / "model.tsv", [&](std::ostream &g) {
       g << "Vu\tVe\tlambda\tstatus\tprofile_objective\treference\tcandidate\n"

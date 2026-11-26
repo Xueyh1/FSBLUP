@@ -15,6 +15,17 @@ struct NearPdOptions {
   bool keep_diag = false;
 };
 
+// Copy time is a diagnostic subset of the other three timers.
+struct PdTimes {
+  double eigen = 0, reconstruction = 0, matrix_work = 0, copy = 0;
+  void add(const PdTimes &other) {
+    eigen += other.eigen;
+    reconstruction += other.reconstruction;
+    matrix_work += other.matrix_work;
+    copy += other.copy;
+  }
+};
+
 struct NearPdResult {
   arma::mat matrix;
   int iterations;
@@ -22,6 +33,7 @@ struct NearPdResult {
   double rel_tol;
   double norm_f;
   double input_min_eigen;
+  PdTimes timing;
 };
 
 NearPdResult near_pd(const arma::mat &input, const NearPdOptions &options = {});
