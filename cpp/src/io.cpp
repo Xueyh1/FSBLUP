@@ -1,5 +1,6 @@
 #include "core.hpp"
 #include <charconv>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -15,7 +16,14 @@ double number(const string &s) {
   double x;
   try {
     x = std::stod(s, &used);
-  } catch (const std::exception &) {
+  } catch (const std::out_of_range &) {
+    // strtod may set ERANGE for a representable, nonzero subnormal.
+    char *end = nullptr;
+    x = std::strtod(s.c_str(), &end);
+    if (end == s.data() + s.size() && std::fpclassify(x) == FP_SUBNORMAL)
+      return x;
+    throw std::runtime_error("expected finite number: " + s);
+  } catch (const std::invalid_argument &) {
     throw std::runtime_error("expected finite number: " + s);
   }
   if (used != s.size() || !std::isfinite(x))
@@ -150,7 +158,8 @@ void write_file(const fs::path &path,
     // A disk error can first appear while closing the last buffered block.
     stream.close();
   } catch (const std::ios_base::failure &error) {
-    throw std::runtime_error("cannot write " + path.string() + ": " + error.what());
+    throw std::runtime_error("cannot write " + path.string() + ": " +
+                             error.what());
   }
 }
 double budget(size_t n, size_t m, double cap) {
@@ -211,7 +220,8 @@ Kernel read_kernel(const fs::path &p, double cap) {
   double scale = std::max(1., arma::abs(k).max());
   require(arma::abs(k - k.t()).max() <= 1e-10 * scale,
           "asymmetric kernel: " + p.string());
-  return {rows, (k + k.t()) / 2};
+  symmetrize(k, scale);
+  return {std::move(rows), std::move(k)};
 }
 string field(const string &s) {
   if (s.find_first_of("\"\t,") == string::npos)
@@ -238,11 +248,13 @@ void write_matrix(const fs::path &p, const Ids &ids, const mat &k) {
       row += field(ids[i]);
       for (size_t j = 0; j < ids.size(); ++j) {
         row.push_back('\t');
-        const auto result = std::to_chars(number, number + sizeof(number), k(i, j),
-                                          std::chars_format::general,
-                                          std::numeric_limits<double>::max_digits10);
+        const auto result =
+            std::to_chars(number, number + sizeof(number), k(i, j),
+                          std::chars_format::general,
+                          std::numeric_limits<double>::max_digits10);
         if (result.ec != std::errc{})
-          throw std::runtime_error("cannot format matrix value for " + p.string());
+          throw std::runtime_error("cannot format matrix value for " +
+                                   p.string());
         row.append(number, result.ptr);
       }
       row.push_back('\n');

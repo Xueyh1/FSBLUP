@@ -97,6 +97,7 @@ struct Features {
   mat k;
   size_t kept = 0, filtered = 0, constant = 0, imputed = 0;
 };
+void symmetrize(mat &k, double scale);
 Kernel pedigree(const Ids &, const Ids &, const Ids &, double memory_mb);
 Features genomic(mat);
 Features omics(mat, bool fpkm);

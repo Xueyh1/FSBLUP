@@ -3,6 +3,25 @@
 #include <chrono>
 #include <queue>
 namespace fsb {
+void symmetrize(mat &k, double scale) {
+  if (scale <= std::numeric_limits<double>::max() / 2) {
+    k = (k + k.t()) / 2;
+    return;
+  }
+  // Preserve already equal values (including subnormals). At large scale
+  // halving before addition prevents overflow for almost-equal extreme values.
+  for (size_t col = 0; col < k.n_cols; ++col)
+    for (size_t row = col + 1; row < k.n_rows; ++row) {
+      double a = k(row, col), b = k(col, row);
+      if (a != b) {
+        double v = (std::max(std::abs(a), std::abs(b)) <=
+                    std::numeric_limits<double>::max() / 2)
+                       ? (a + b) / 2
+                       : a / 2 + b / 2;
+        k(row, col) = k(col, row) = v;
+      }
+    }
+}
 Kernel pedigree(const Ids &ids, const Ids &sire, const Ids &dam, double cap) {
   unique_ids(ids);
   require(ids.size() == sire.size() && ids.size() == dam.size(),
@@ -358,7 +377,7 @@ Fusion FusionPlan::combine(double alpha, double beta, BlockAudit *audit,
     raw.submat(s, u) = raw.submat(u, s).t();
     raw.submat(s, g) = raw.submat(g, s).t();
   }
-  raw = (raw + raw.t()) / 2;
+  symmetrize(raw, arma::abs(raw).max());
   pd_blocks.push_back({"K"});
   mat k = adjusted(raw, note, policy, diagnostics, pd_blocks.back());
   return {std::move(raw), std::move(k), std::move(note), std::move(pd_blocks)};

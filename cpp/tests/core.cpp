@@ -25,6 +25,42 @@ vec numbers(const Table &t, const string &col) {
 int main(int argc, char **argv) {
   try {
     require(argc == 2, "need fixture directory");
+    // Odd row/column counts use the large Gram path, including the final
+    // element.
+    mat dosage(97, 33), expression(97, 33);
+    for (size_t j = 0; j < 33; ++j)
+      for (size_t i = 0; i < 97; ++i) {
+        dosage(i, j) = (i + j) % 3;
+        expression(i, j) = std::sin(.03 * (i + 1) * (j + 1));
+      }
+    mat z = expression;
+    for (size_t j = 0; j < 33; ++j)
+      z.col(j) = (z.col(j) - arma::mean(z.col(j))) / arma::stddev(z.col(j));
+    close(arma::abs(omics(expression, false).k - z * z.t() / 33).max(), 0);
+    mat w = dosage;
+    double denom = 0;
+    for (size_t j = 0; j < 33; ++j) {
+      double p = arma::mean(w.col(j)) / 2;
+      w.col(j) -= 2 * p;
+      denom += 2 * p * (1 - p);
+    }
+    close(arma::abs(genomic(dosage).k - w * w.t() / denom).max(), 0);
+    mat half = vec({2., 1., NAN, -9.});
+    // p=(2+1)/8, q=1/8 after fractional imputation
+    vec centered = vec({2., 1., 1.5, 1.5}) - .75;
+    close(
+        arma::abs(genomic(half).k - centered * centered.t() / (2 * .375 * .125))
+            .max(),
+        0);
+    rejects([&] { genomic(arma::zeros<mat>(3, 2)); });
+    rejects([&] {
+      dosage(0, 0) = arma::datum::inf;
+      genomic(dosage);
+    });
+    rejects([&] {
+      expression(0, 0) = -arma::datum::inf;
+      omics(expression, false);
+    });
     fs::path d = argv[1];
     auto load = [&](string s) { return read_kernel(d / (s + ".tsv"), 1024); };
     auto k = load("K");
@@ -63,8 +99,9 @@ int main(int argc, char **argv) {
       auto wide = solve(arma::eye<mat>(n, n), design, response,
                         arma::regspace<uvec>(0, n - 1), .7);
       close(arma::abs(wide.u - deviation / 1.7).max(), 0, 1e-10);
-      close(arma::abs(wide.yhat - (response - deviation + deviation / 1.7)).max(),
-            0, 1e-10);
+      close(
+          arma::abs(wide.yhat - (response - deviation + deviation / 1.7)).max(),
+          0, 1e-10);
     }
     // Verify every BB000 intermediate using the reconstructed propagation and
     // mixture.
@@ -146,6 +183,28 @@ int main(int argc, char **argv) {
       require(trial.alpha >= 0 && trial.beta >= 0 &&
                   trial.alpha + trial.beta <= 1,
               "strict simplex");
+    // Merge in serial traversal order even if workers finish out of order.
+    auto near_tie = [](double a, double b) {
+      Evaluation e;
+      e.value = 1 + (a + b) * 5e-13;
+      return e;
+    };
+    auto concurrent = search(true, false, near_tie, 4);
+    close(concurrent.alpha, 0);
+    close(concurrent.beta, 0);
+    require(concurrent.stop == "improvement < 1e-4", "parallel stop rule");
+    rejects([] {
+      search(
+          true, false,
+          [](double a, double b) {
+            if (b == .25)
+              throw std::runtime_error("worker exception");
+            Evaluation e;
+            e.value = a;
+            return e;
+          },
+          4);
+    });
     auto legacy = load("legacy_solver_K");
     auto old = solve(legacy.values, x.col(0), y, arma::find_finite(y));
     close(arma::abs(old.u - numbers(read_table(d / "legacy_u.tsv"), "u")).max(),

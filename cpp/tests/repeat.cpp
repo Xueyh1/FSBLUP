@@ -20,6 +20,13 @@ int kib(const char *field) {
   return -1;
 }
 void exercise(const Layers &layers, const fs::path &path) {
+  mat feature(9, 3);
+  for (size_t j = 0; j < feature.n_cols; ++j)
+    for (size_t i = 0; i < feature.n_rows; ++i)
+      feature(i, j) = (i + 2 * j) % 3;
+  feature(4, 1) = arma::datum::nan;
+  require(genomic(feature).k.is_finite() && omics(feature, false).k.is_finite(),
+          "repeated raw kernels");
   const FusionPlan plan(layers);
   vec y = {-3., -.2, 1.7, 4.5, -1.6, 2.9, 3.5, 1.};
   mat x(8, 1, arma::fill::ones);
@@ -81,9 +88,10 @@ int main(int argc, char **argv) {
         for (int retry = 0; retry < 50 && entries("/proc/self/task") != threads;
              ++retry)
           std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        std::cout << i << '\t' << mallinfo2().uordblks << '\t' << kib("Rss:")
-                  << '\t' << kib("Pss:") << '\t' << entries("/proc/self/fd")
-                  << '\t' << entries("/proc/self/task") << '\n';
+        std::cout << i << '\t' << (mallinfo2().uordblks + mallinfo2().hblkhd)
+                  << '\t' << kib("Rss:") << '\t' << kib("Pss:") << '\t'
+                  << entries("/proc/self/fd") << '\t'
+                  << entries("/proc/self/task") << '\n';
         require(entries("/proc/self/fd") == fd &&
                     entries("/proc/self/task") == threads,
                 "resource count changed");

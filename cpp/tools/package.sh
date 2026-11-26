@@ -34,6 +34,6 @@ cp ../R/FSBLUP.R "$root/source/R/"
 cp ../LICENSE.md "$root/source/"
 cp -r tests/data "$root/example"
 (cd "$root" && ldd bin/fsblup | sed -E 's/ \(0x[0-9a-f]+\)//g' | sed "s|$PWD|.|g" > linked-libraries.txt)
-tar -C "$stage" -czf "$stage/$name.tar.gz" "$name"
+tar --exclude=__pycache__ -C "$stage" -czf "$stage/$name.tar.gz" "$name"
 mv "$stage/$name.tar.gz" "$dest/$name.tar.gz"
 (cd "$dest" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
