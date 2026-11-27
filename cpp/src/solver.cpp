@@ -158,7 +158,9 @@ Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
   vec residual = arma::solve(arma::trimatu(lower.t()), wy - wx * b);
   vec u = k.cols(train) * residual;
   b += trend;
-  vec yhat = design.target * b + u + offset;
+  vec yhat = design.target * b + u;
+  if (design.intercept < p)
+    yhat += offset * x.col(design.intercept);
   design.restore(b, offset);
   if (exponent != 0) {
     auto restore_units = [exponent](double v) {

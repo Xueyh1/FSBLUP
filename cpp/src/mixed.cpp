@@ -159,8 +159,10 @@ Model fit_operator(const TrainKernel &input, const mat &training,
   vec yh = x * b + u;
   vec fixed_trend = x * trend;
   for (size_t i = 0; i < yh.n_elem; ++i)
-    yh[i] = std::scalbn((std::scalbn(yh[i], center) + fixed_trend[i]) + offset,
-                        initial);
+    yh[i] =
+        std::scalbn((std::scalbn(yh[i], center) + fixed_trend[i]) +
+                        (intercept ? offset * targets(i, design.intercept) : 0),
+                    initial);
   for (auto &v : u)
     v = std::scalbn(v, exponent);
   for (size_t j = 0; j < p; ++j)
