@@ -1,4 +1,5 @@
 #include "cache.hpp"
+#include "cli.hpp"
 #include "near_pd.hpp"
 #include <chrono>
 #include <fstream>
@@ -18,6 +19,34 @@ int kib(const char *field) {
     if (line.rfind(field, 0) == 0)
       return std::stoi(line.substr(std::strlen(field)));
   return -1;
+}
+void exercise_retry(const fs::path &dir) {
+  const auto kernel =
+      (fs::path(FSBLUP_TEST_DATA).parent_path() / "pcg_data" / "kernel.tsv")
+          .string();
+  Options options(0, nullptr, "fit");
+  options.v = {
+      {"A", kernel},           {"G", kernel},
+      {"O", kernel},           {"pheno", (dir / "retry-trait.tsv").string()},
+      {"trait", "y"},          {"year", "0"},
+      {"metric", "rmse"},      {"strict-simplex", "true"},
+      {"trace", "hutchinson"}, {"probe-solver", "lanczos"},
+      {"slq-depth", "24"},     {"probes", "2"},
+      {"max-probes", "2"},     {"mc-tol", "1e-12"},
+      {"retry-probes", "12"},  {"parallel", "weights"},
+      {"threads", "2"}};
+  Timing timing;
+  auto out = dir / "retry-fit";
+  bool failed = false;
+  try {
+    run("fit", options, out, 128, timing);
+  } catch (const TuningFailure &e) {
+    failed = string(e.what()).find("probe budget exhausted") != string::npos;
+  }
+  require(failed, "expected exhausted stochastic search");
+  auto summary = read_table(out / "tuning.tsv");
+  require(summary.column("retry_reserved").at(0) == "12",
+          "retry budget not consumed");
 }
 void exercise(const Layers &layers, const fs::path &path,
               const fs::path &cache_dir) {
@@ -57,6 +86,7 @@ void exercise(const Layers &layers, const fs::path &path,
                             stochastic, derived);
   require(internal.status == "approx-interior" && internal.vu > 1,
           "repeated stochastic face selection");
+  exercise_retry(cache_dir);
   Cache cache(cache_dir, 256);
   Ids cache_ids(cache.ped.ids.begin(), cache.ped.ids.begin() + 8);
   auto cache_folds =
@@ -137,6 +167,16 @@ int main(int argc, char **argv) {
     fs::path data = FSBLUP_TEST_DATA;
     prepare_cache(data / "ped.tsv", data / "snp.tsv", data / "omics.tsv", false,
                   cache_dir, 256, true);
+    fs::create_directory(fs::path(cache_dir) / "retry-fit");
+    auto traits = read_table(data.parent_path() / "pcg_data" / "trait.tsv");
+    write_file(fs::path(cache_dir) / "retry-trait.tsv", [&](auto &out) {
+      out << "ID\ty\tyear\n";
+      for (size_t j = 0; j < traits.rows.size(); ++j) {
+        out << traits.rows[j][0] << '\t'
+            << (j < 32 ? traits.rows[j][1] : std::to_string(1 + j / 30.))
+            << '\t' << (j >= 32) << '\n';
+      }
+    });
     // Start sanitizer and pthread runtime services before recording the
     // process baseline. Join a single short-lived worker and let procfs
     // retire its task entry before exercising any model code.
