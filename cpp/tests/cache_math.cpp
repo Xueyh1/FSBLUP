@@ -12,6 +12,8 @@ int main(int argc, char **argv) {
     Ids ids = l.a.ids;
     std::reverse(ids.begin(), ids.end());
     std::vector<std::pair<double, double>> cases = {{.02, .4}, {0, 0}};
+    if (cache.mode() == "B")
+      cases.emplace_back(0., .4);
     if (cache.mode() == "A")
       cases.emplace_back(-.01, -.01);
     for (auto weights : cases) {
@@ -37,7 +39,7 @@ int main(int argc, char **argv) {
           "training product");
       require(arma::abs(sys.cross(b) - expected.cols(train) * b).max() < 2e-8,
               "cross product");
-      if (cache.mode() == "A") {
+      if (cache.mode() == "A" || cache.mode() == "B") {
         uvec subset = {2, 7, 0, 5, 3}, local = {3, 1, 0};
         Ids targets;
         for (auto row : subset)

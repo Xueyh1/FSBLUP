@@ -12,6 +12,7 @@ struct PedigreeOperator {
   std::function<mat(const mat &)> restricted(const uvec &rows) const;
 };
 struct CacheIO {
+  std::atomic<uint64_t> phase_bytes[4]{};
   std::atomic<uint64_t> bytes{0}, reads{0}, read_ns{0}, decode_ns{0};
 };
 struct FeatureFile {

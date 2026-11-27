@@ -7,6 +7,13 @@
 #include <queue>
 namespace fsb {
 namespace {
+enum class ReadPhase { calibration, preload, training, cross };
+thread_local ReadPhase read_phase = ReadPhase::calibration;
+struct ScopedReadPhase {
+  ReadPhase old = read_phase;
+  explicit ScopedReadPhase(ReadPhase next) { read_phase = next; }
+  ~ScopedReadPhase() { read_phase = old; }
+};
 string digest(const fs::path &path) {
   std::ifstream in(path, std::ios::binary);
   require(bool(in), "cannot read " + path.string());
@@ -458,6 +465,8 @@ void FeatureFile::read(std::ifstream &f, size_t rows, double *dest,
           .count(),
       std::memory_order_relaxed);
   io.bytes.fetch_add(rows * stride, std::memory_order_relaxed);
+  io.phase_bytes[static_cast<size_t>(read_phase)].fetch_add(
+      rows * stride, std::memory_order_relaxed);
   ++io.reads;
   if (!lookup.empty()) {
     for (size_t i = 0; i < rows; ++i)
@@ -685,6 +694,7 @@ FeatureWorkspace feature_workspace(size_t genomic, size_t omics, size_t train,
 TrainKernel PopulationKernel::restrict(const Ids &targets, const uvec &train,
                                        double cap, double solver_mib,
                                        size_t rhs_panel) const {
+  ScopedReadPhase setup(ReadPhase::preload);
   cap -= retained_mib;
   if (cap <= solver_mib)
     throw CertificationUnavailable(
@@ -705,6 +715,14 @@ TrainKernel PopulationKernel::restrict(const Ids &targets, const uvec &train,
       return res.rows(ix);
     };
   }
+  training = [apply = std::move(training)](const mat &v) {
+    ScopedReadPhase stage(ReadPhase::training);
+    return apply(v);
+  };
+  cross = [apply = std::move(cross)](const mat &v) {
+    ScopedReadPhase stage(ReadPhase::cross);
+    return apply(v);
+  };
   auto dense = [training, n = train.n_elem, whole = ids.size(), cap]() -> mat {
     check_space(160. * n * n + 256. * whole, cap,
                 "exact training spectrum/direct factor; alternatively use "
@@ -752,6 +770,55 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
     return o.apply(x, block, io, &po);
   };
   vec gd = g.diag.elem(pg), od = o.diag.elem(po);
+  auto indexed = [&](double pedigree_weight, double b, double a) {
+    return [this, pa, pg, po, pedigree_weight, a,
+            b](const uvec &tr, const uvec &ix, const uvec &local, double limit,
+               size_t rhs_panel) {
+      auto plan = feature_workspace(b ? g.columns : 0, a ? o.columns : 0,
+                                    tr.n_elem, ix.n_elem, rhs_panel, streaming,
+                                    resident, limit * 1048576.);
+      check_space(plan.planned_bytes, limit,
+                  "training features and cross workspace");
+      size_t chunk = plan.block;
+      bool keep = plan.keep;
+      ProductPair A, G, O;
+      if (pedigree_weight != 0) {
+        A.train = ped.restricted(pa.elem(tr));
+        auto ap = ped.restricted(pa.elem(ix));
+        A.cross = [ap, local, n = ix.n_elem](const mat &v) -> mat {
+          mat z(n, v.n_cols, arma::fill::zeros);
+          z.rows(local) = v;
+          return ap(z);
+        };
+      }
+      if (b)
+        G = feature_products(g, pg.elem(tr), pg.elem(ix), local, chunk, keep,
+                             io);
+      if (a)
+        O = feature_products(o, po.elem(tr), po.elem(ix), local, chunk, keep,
+                             io);
+      auto combine = [a, b, pedigree_weight](const Apply &p, const Apply &g,
+                                             const Apply &o, const mat &v,
+                                             mat z) -> mat {
+        if (p)
+          z += (pedigree_weight)*p(v);
+        if (g)
+          z += b * g(v);
+        if (o)
+          z += a * o(v);
+        return z;
+      };
+      return ProductPair{
+          [combine, A, G, O](const mat &v) {
+            return combine(A.train, G.train, O.train, v, 1e-6 * v);
+          },
+          [combine, A, G, O, local, n = ix.n_elem](const mat &v) {
+            mat z(n, v.n_cols, arma::fill::zeros);
+            z.rows(local) = 1e-6 * v;
+            return combine(A.cross, G.cross, O.cross, v, std::move(z));
+          }};
+    };
+  };
   if (mode_name == "A") {
     if (a < 0 || b < 0 || a + b > 1) {
       // Materialize only the requested weighted covariance. The three input
@@ -795,53 +862,7 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
                              z += a * op(v);
                            return z;
                          });
-    result.common_products = [this, pa, pg, po, a,
-                              b](const uvec &tr, const uvec &ix,
-                                 const uvec &local, double limit,
-                                 size_t rhs_panel) {
-      auto plan = feature_workspace(b ? g.columns : 0, a ? o.columns : 0,
-                                    tr.n_elem, ix.n_elem, rhs_panel, streaming,
-                                    resident, limit * 1048576.);
-      check_space(plan.planned_bytes, limit,
-                  "training features and cross workspace");
-      size_t chunk = plan.block;
-      bool keep = plan.keep;
-      ProductPair A, G, O;
-      if (1 - a - b != 0) {
-        A.train = ped.restricted(pa.elem(tr));
-        auto ap = ped.restricted(pa.elem(ix));
-        A.cross = [ap, local, n = ix.n_elem](const mat &v) -> mat {
-          mat z(n, v.n_cols, arma::fill::zeros);
-          z.rows(local) = v;
-          return ap(z);
-        };
-      }
-      if (b)
-        G = feature_products(g, pg.elem(tr), pg.elem(ix), local, chunk, keep,
-                             io);
-      if (a)
-        O = feature_products(o, po.elem(tr), po.elem(ix), local, chunk, keep,
-                             io);
-      auto combine = [a, b](const Apply &p, const Apply &g, const Apply &o,
-                            const mat &v, mat z) -> mat {
-        if (p)
-          z += (1 - a - b) * p(v);
-        if (g)
-          z += b * g(v);
-        if (o)
-          z += a * o(v);
-        return z;
-      };
-      return ProductPair{
-          [combine, A, G, O](const mat &v) {
-            return combine(A.train, G.train, O.train, v, 1e-6 * v);
-          },
-          [combine, A, G, O, local, n = ix.n_elem](const mat &v) {
-            mat z(n, v.n_cols, arma::fill::zeros);
-            z.rows(local) = 1e-6 * v;
-            return combine(A.cross, G.cross, O.cross, v, std::move(z));
-          }};
-    };
+    result.common_products = indexed(1 - a - b, b, a);
     return result;
   }
   auto s = positions(pop, oids);
@@ -867,54 +888,85 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
   if (mode_name == "B") {
     if (b < 0 || b > 1)
       return dense_certificate();
-    check_space(96. * n * ns + 128. * ns * ns + 256. * whole, cap,
-                "B Gss/regression workspace");
-    auto gcols = columns(gp, n, s, std::min<size_t>(8, ns));
-    mat base = gcols.rows(s);
-    base.diag() += 1e-6;
-    mat l;
-    require(arma::chol(l, base, "lower"), "Gss needs dense PD handling");
-    uvec mask(n, arma::fill::ones);
-    mask.elem(s).zeros();
-    uvec u = arma::find(mask);
-    mat reg = arma::solve(arma::trimatu(l.t()),
-                          arma::solve(arma::trimatl(l), gcols.rows(u).t(),
-                                      arma::solve_opts::no_approx),
-                          arma::solve_opts::no_approx)
-                  .t();
-    mat t = base;
+    auto loading = std::make_shared<mat>(), delta = std::make_shared<mat>();
+    vec joint(n, arma::fill::zeros);
+    joint.elem(s).ones();
+    vec hd = gd + 1e-6 * joint;
     if (a != 0) {
-      mat o_mat = columns(op, ns, arma::regspace<uvec>(0, ns - 1),
+      check_space(96. * n * ns + 128. * ns * ns + 256. * whole, cap,
+                  "B calibration workspace");
+      mat cols = columns(gp, n, s, std::min<size_t>(8, ns));
+      mat base = cols.rows(s);
+      base.diag() += 1e-6;
+      mat lower;
+      if (!arma::chol(lower, base, "lower"))
+        return dense_certificate();
+      mat omics = columns(op, ns, arma::regspace<uvec>(0, ns - 1),
                           std::min<size_t>(8, ns));
-      double om = arma::mean(od), gm = arma::mean(base.diag()),
-             contrast = arma::mean(arma::mean(o_mat)) - om;
-      require(std::abs(contrast) > 1e-14 * std::max(1., arma::abs(o_mat).max()),
+      double om = arma::mean(od), gm = arma::mean(base.diag());
+      double contrast = arma::mean(arma::mean(omics)) - om;
+      require(std::abs(contrast) > 1e-14 * std::max(1., arma::abs(omics).max()),
               "unidentifiable BB000 omics calibration");
       double slope = (arma::mean(arma::mean(base)) - gm) / contrast;
-      t = a * (slope * o_mat + (om - slope * gm)) + (1 - a) * base;
+      mat replacement =
+              a * (slope * omics + (om - slope * gm)) + (1 - a) * base,
+          check;
+      if (!arma::chol(check, replacement))
+        return dense_certificate();
+      *delta = replacement - base;
+      *loading = arma::solve(arma::trimatu(lower.t()),
+                             arma::solve(arma::trimatl(lower), cols.t(),
+                                         arma::solve_opts::no_approx),
+                             arma::solve_opts::no_approx)
+                     .t();
+      loading->rows(s) = arma::eye(ns, ns);
+      hd += arma::sum(((*loading) * (*delta)) % (*loading), 1);
     }
-    if (!arma::chol(l, t))
-      return dense_certificate();
-    mat delta = t - base;
-    vec hd = gd;
-    hd.elem(u) += arma::sum((reg * delta) % reg, 1);
-    hd.elem(s) = t.diag();
     double scale = arma::mean(hd);
     require(scale > 0, "nonpositive BB000 scale");
+    double gw = b / scale;
     auto result =
-        finish((1 - b) * ad + b * hd / scale,
-               [ap, gp, s, u, reg = std::move(reg), t = std::move(t),
-                delta = std::move(delta), b, scale](const mat &x) -> mat {
-                 mat xu = x;
-                 xu.rows(s).zeros();
-                 mat h = gp(xu);
-                 mat v = reg.t() * x.rows(u);
-                 h.rows(u) += reg * (delta * v + t * x.rows(s));
-                 h.rows(s) = t * (v + x.rows(s));
-                 return (1 - b) * ap(x) + (b / scale) * h;
+        finish((1 - b) * ad + gw * hd,
+               [ap, gp, b, gw, loading, delta, joint](const mat &v) -> mat {
+                 mat h = gp(v) + 1e-6 * (v.each_col() % joint);
+                 if (!delta->empty())
+                   h += (*loading) * ((*delta) * (loading->t() * v));
+                 return (1 - b) * ap(v) + gw * h;
                },
                {{"Gss"}, {"K"}});
-    result.retained_mib += (8. * n * ns + 24. * ns * ns) / 1048576.;
+    auto base_products = indexed(1 - b, gw, 0);
+    result.retained_mib +=
+        (8. * (loading->n_elem + delta->n_elem + n)) / 1048576.;
+    result.common_products = [base_products, loading, delta, joint,
+                              gw](const uvec &tr, const uvec &ix,
+                                  const uvec &local, double limit, size_t rhs) {
+      double scratch =
+          8. * (tr.n_elem + ix.n_elem + 2. * rhs) * loading->n_cols;
+      check_space(scratch, limit, "restricted B calibration");
+      auto base = base_products(tr, ix, local, limit - scratch / 1048576., rhs);
+      vec diag = 1e-6 * gw * joint.elem(tr);
+      auto left = std::make_shared<mat>(), target = std::make_shared<mat>();
+      if (!delta->empty()) {
+        *left = loading->rows(tr);
+        *target = loading->rows(ix);
+      }
+      return ProductPair{[fn = std::move(base.train), left, delta, diag,
+                          gw](const mat &v) -> mat {
+                           mat out = fn(v) + v.each_col() % diag;
+                           if (!delta->empty())
+                             out += gw * (*left) * ((*delta) * (left->t() * v));
+                           return out;
+                         },
+                         [fn = std::move(base.cross), left, target, delta, diag,
+                          gw, local](const mat &v) -> mat {
+                           mat out = fn(v);
+                           out.rows(local) += v.each_col() % diag;
+                           if (!delta->empty())
+                             out +=
+                                 gw * (*target) * ((*delta) * (left->t() * v));
+                           return out;
+                         }};
+    };
     return result;
   }
   // Pedigree-only connected components have zero A cross-covariance with

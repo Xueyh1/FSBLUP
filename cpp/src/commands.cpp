@@ -974,7 +974,8 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
       write_file(dir / "cache_usage.tsv", [&](auto &f) {
         f << "mode\tbackend\tfeature_bytes\tread_calls\tread_seconds\tdecode_"
              "seconds\tverified_cache_bytes\tstorage\ttargets\tactive_"
-             "component_ids\n"
+             "component_ids\tcalibration_bytes\ttraining_preload_"
+             "bytes\ttraining_bytes\tcross_bytes\n"
           << mode << '\t' << (use_op ? "operator" : "dense") << '\t'
           << cache->io.bytes.load() << '\t' << cache->io.reads.load() << '\t'
           << cache->io.read_ns.load() * 1e-9 << '\t'
@@ -984,7 +985,10 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
               : cache->resident ? "resident"
                                 : "auto")
           << '\t' << p.ids.size() << '\t'
-          << (use_op ? selected_operator->active_count : 0) << '\n';
+          << (use_op ? selected_operator->active_count : 0);
+        for (const auto &bytes : cache->io.phase_bytes)
+          f << '\t' << bytes.load();
+        f << '\n';
       });
 
     tm.mark("final_reml_blup");
