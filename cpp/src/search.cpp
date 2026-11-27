@@ -61,19 +61,39 @@ std::vector<Fold> split(const Labels &labels, bool temporal, const vec &truth,
   }
   return out;
 }
+// Keep a power-of-two exponent for the running sum of squared differences.
+// This also handles an individual difference larger than DBL_MAX when its
+// root mean square over all rows is representable.
+static double root_mean_square(const vec &a, const vec *b = nullptr) {
+  int largest = 0;
+  double sum = 0;
+  for (size_t i = 0; i < a.n_elem; ++i) {
+    double other = b ? (*b)[i] : 0;
+    if (a[i] == other)
+      continue;
+    int exponent, adjustment;
+    std::frexp(std::max(std::abs(a[i]), std::abs(other)), &exponent);
+    double mantissa =
+        std::frexp(std::scalbn(a[i], -exponent) - std::scalbn(other, -exponent),
+                   &adjustment);
+    exponent += adjustment;
+    if (sum == 0)
+      largest = exponent;
+    if (exponent > largest) {
+      sum = std::scalbn(sum, 2 * (largest - exponent));
+      largest = exponent;
+    }
+    sum += std::scalbn(mantissa * mantissa, 2 * (exponent - largest));
+  }
+  return std::scalbn(std::sqrt(sum / a.n_elem), largest);
+}
 double score(const vec &truth, const vec &pred, const string &metric) {
   require(pred.n_elem == truth.n_elem && truth.is_finite() && pred.is_finite(),
           "invalid score vectors");
   auto reason = invalid_truth(truth, metric);
   require(reason.empty(), reason);
-  if (metric == "rmse") {
-    long double sum = 0;
-    for (size_t j = 0; j < truth.n_elem; ++j) {
-      long double d = static_cast<long double>(truth[j]) - pred[j];
-      sum += d * d;
-    }
-    return std::sqrt(sum / truth.n_elem);
-  }
+  if (metric == "rmse")
+    return root_mean_square(truth, &pred);
   if (metric == "cor") {
     vec a = truth - arma::mean(truth), b = pred - arma::mean(pred);
     double d = arma::norm(a) * arma::norm(b);
@@ -179,15 +199,9 @@ ScoreRule scoring_rule(const string &metric, const vec &truth,
   require(policy == "relative" || policy == "legacy", "unknown score policy");
   if (metric != "rmse" || policy == "legacy")
     return {metric == "rmse", 1};
-  auto rms = [](const vec &v) -> double {
-    long double total = 0;
-    for (double x : v)
-      total += static_cast<long double>(x) * x;
-    return std::sqrt(total / v.n_elem);
-  };
-  double scale = rms(truth);
+  double scale = root_mean_square(truth);
   if (!scale)
-    scale = rms(response);
+    scale = root_mean_square(response);
   return {true, scale > 0 ? scale : 1};
 }
 Search search(bool strict, ScoreRule rule,

@@ -155,6 +155,19 @@ int main(int argc, char **argv) {
     close(ped.values(0, 2), .5);
     require(ped.ids[2] == "f", "implicit founder");
     rejects([] { pedigree({"1", "2"}, {"2", "1"}, {"0", "0"}, 100); });
+    for (double unit : {1e-200, 1., 1e200}) {
+      vec truth = {unit, -unit}, pred = {-unit, unit},
+          zeros(2, arma::fill::zeros);
+      close(score(truth, pred, "rmse") / unit, 2.);
+      auto rule = scoring_rule("rmse", truth, zeros, "relative");
+      require(rule.better(unit, 2 * unit) && !rule.better(unit, unit),
+              "relative comparison");
+      require(rule.stopped(unit, unit * (1. + 1e-6)) &&
+                  !rule.stopped(unit, unit * 1.1),
+              "relative stopping");
+      close(scoring_rule("rmse", zeros, truth, "relative").scale / unit, 1.);
+      close(scoring_rule("rmse", zeros, zeros, "relative").scale, 1.);
+    }
     close(score({0, 1, 0, 1}, {.1, .1, .4, .8}, "auc"), .625);
     rejects([] { score({0, 2}, {1, 2}, "auc"); });
     auto folds = split({{1, {1, 1, 2, 2}}}, false, {0, 0, 0, 1}, "auc");
