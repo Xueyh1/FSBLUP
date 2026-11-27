@@ -1,0 +1,7 @@
+   RealMemory=500000 AllocMem=491520 FreeMem=211773 Sockets=2 Boards=1
+Fri Nov 27 20:57:07 CST 2026
+   CPUAlloc=32 CPUEfctv=64 CPUTot=64 CPULoad=30.39
+   RealMemory=500000 AllocMem=492544 FreeMem=107655 Sockets=2 Boards=1
+srun: job 32873 queued and waiting for resources
+srun: error: Unable to allocate resources: Requested nodes are busy
+exit 1

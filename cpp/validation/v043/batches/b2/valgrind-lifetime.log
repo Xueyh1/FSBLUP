@@ -1,0 +1,21 @@
+==3064333== Memcheck, a memory error detector
+==3064333== Copyright (C) 2002-2026, and GNU GPL'd, by Julian Seward et al.
+==3064333== Using Valgrind-3.27.1 and LibVEX; rerun with -h for copyright info
+==3064333== Command: /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/runs/v043/b2/mem/repeat_test 8
+==3064333==
+==3064333==
+==3064333== HEAP SUMMARY:
+==3064333==     in use at exit: 165,818 bytes in 3,248 blocks
+==3064333==   total heap usage: 620,373 allocs, 617,125 frees, 479,155,133 bytes allocated
+==3064333==
+==3064333== LEAK SUMMARY:
+==3064333==    definitely lost: 0 bytes in 0 blocks
+==3064333==    indirectly lost: 0 bytes in 0 blocks
+==3064333==      possibly lost: 0 bytes in 0 blocks
+==3064333==    still reachable: 165,818 bytes in 3,248 blocks
+==3064333==         suppressed: 0 bytes in 0 blocks
+==3064333== Reachable blocks (those to which a pointer was found) are not shown.
+==3064333== To see them, rerun with: --leak-check=full --show-leak-kinds=all
+==3064333==
+==3064333== For lists of detected and suppressed errors, rerun with: -s
+==3064333== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)

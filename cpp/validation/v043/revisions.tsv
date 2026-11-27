@@ -1,0 +1,7 @@
+batch	revision	subject
+b1	98a56ba	stochastic peak and contrast identifiability
+b2	b50705a	scoring population and failure accounting
+b3	6cfe194	search directions and stopping
+b4	8bfc119	actual RHS and active certification
+b5	d0e5689	round retries and fold reuse
+bfinal	c250adb	complete integrated detector snapshot

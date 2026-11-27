@@ -2,7 +2,7 @@
 
 ## 0.4.3 内部峰、搜索分辨率与工作区
 
-**求解成本。** 双峰夹具上，普通随机 AI 默认起点的总 RHS/matvec 从 522/1705 变为 766/2403，EM 从 2628/8150 变为 6438/19745。新版两者各有 68 个 RHS 和 170 次 matvec 直接用于竞争比较，其余增量包含从较高盆地起点继续迭代。预热后 3 次配对墙钟中位数 AI 为 .0161 / .0158 s、EM 为 .0191 / .0262 s（旧 / 新）。在 64 和 512 个体固定 λ 的同路径 legacy 搜索中，两版分别完成相同的 17、18 点；512 个体用时中位数为 .0516 / .0536 s。[重复与离散程度](validation/v043/modes-medians.tsv) · [固定 λ 配对计量](validation/v043/paired-medians.tsv) · [逐 ID 与独立高峰对照](validation/v043/comparison-per-id.tsv)
+**求解成本。** 双峰夹具上，普通随机 AI 默认起点的总 RHS/matvec 从 522/1705 变为 766/2403，EM 从 2628/8150 变为 6438/19745。新版两者各有 68 个 RHS 和 170 次 matvec 直接用于竞争比较，其余增量包含从较高盆地起点继续迭代。预热后 3 次配对墙钟中位数 AI 为 .01565 / .01600 s、EM 为 .01974 / .02589 s（旧 / 新）。在 64 和 512 个体固定 λ 的同路径 legacy 搜索中，两版分别完成相同的 17、18 点；512 个体用时中位数为 .05113 / .05295 s。[重复与离散程度](validation/v043/modes-medians.tsv) · [固定 λ 配对计量](validation/v043/paired-medians.tsv) · [逐 ID 与独立高峰对照](validation/v043/comparison-per-id.tsv)
 
 **邻域与停止。** 初始 15 点保持原顺序，细化先访问四个对角方向，再访问负/正 α、负/正 β 轴向。在 simplex 上，反向对角构成和为 1 边界的切向，坐标方向允许在另外两条边上移动。全局去重后评估，容差内并列仍保留先访问者。默认只有步长不大于 1/32 且归一化改进小于 10⁻⁴ 才提前停止，最多 10 轮。缺失折的候选不能参加排名。legacy 复现旧几何和停止条件，grid 提供固定候选集合。对 1/32 单纯形的 561 个点独立直接 GLS 枚举后，边界最佳 (.125,0)、内部最佳 (.375,.25) 均由新版公开 fit 达到。四折拟合次数分别由 68→120、76→156；原 RMSE .03098 / .03156，新版 direct 小于 4×10⁻¹⁷、PCG 小于 2.5×10⁻¹³。[网格、成本与权重](validation/v043/comparison-grid.tsv)
 
@@ -33,6 +33,10 @@ python3 tools/v043_validation.py "$RELEASE_FSBLUP" split-check
 for rep in 1 2 3; do python3 tools/v043_panel.py "$RELEASE_FSBLUP" "medium-$rep" --n 10000 --cap 32 --mc .18; done
 sbatch -n1 -c16 --mem=68G validation/v043/wide.sh "$RELEASE_FSBLUP" runs/pcg/wide150/A-150000-50000-9 new-wide-run
 ```
+
+### 待集群与真实数据验证
+
+本次没有得到 150000 个体、120000 参考、50000 SNP 完整两折搜索的 **0.4.3** 实测。原始缓存和折表可读，正式发布 ELF 已构建。对相同 16 逻辑 CPU、68 GiB 作业配置的即时分配两次均返回 `Requested nodes are busy`。本次其他作业已预留节点 500000 MiB 中的 491520 MiB，余量 8480 MiB；操作系统报告的空闲内存与 Slurm 可分配量不同。上述 wide 脚本保持原 resident、65536 MiB 算法预算、固定折表和历史搜索几何，使用新版内部峰比较及分轮重试。宽数据的实际完成率、候选前部名单、时间和 RSS 均待验证。真实多代猪群的跨世代预测准确性也待独立表型验证。[分配结果](validation/v043/wide-resource.txt) · [输入指纹](validation/v043/fingerprints.txt)
 
 ## 0.4.2 选权、工作区与缓存
 

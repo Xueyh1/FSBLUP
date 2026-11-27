@@ -1,0 +1,54 @@
+Internal ctest changing into directory: /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/runs/v043/b3/tsan
+Test project /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/runs/v043/b3/tsan
+      Start  1: core
+      Start  2: numerical_cli
+ 1/24 Test  #1: core .............................   Passed    0.14 sec
+      Start  3: solver_shift
+ 2/24 Test  #3: solver_shift .....................   Passed    0.18 sec
+      Start  4: nearpd_core
+ 3/24 Test  #4: nearpd_core ......................   Passed    0.04 sec
+      Start  5: nearpd_cli
+ 4/24 Test  #5: nearpd_cli .......................   Passed    0.74 sec
+      Start  6: nearpd_nested
+ 5/24 Test  #6: nearpd_nested ....................   Passed    0.31 sec
+      Start  7: output_failure
+ 6/24 Test  #7: output_failure ...................   Passed    0.37 sec
+      Start  8: solver_range
+ 7/24 Test  #8: solver_range .....................   Passed    0.48 sec
+      Start  9: io_limits
+ 8/24 Test  #9: io_limits ........................   Passed    0.05 sec
+      Start 10: concurrent_replay
+ 9/24 Test  #2: numerical_cli ....................   Passed    3.23 sec
+      Start 11: repeated_lifetime
+10/24 Test #10: concurrent_replay ................   Passed    2.82 sec
+      Start 12: pcg_reml_math
+11/24 Test #12: pcg_reml_math ....................   Passed    0.18 sec
+      Start 13: pcg_cli
+12/24 Test #11: repeated_lifetime ................   Passed    4.32 sec
+      Start 14: probe_replay
+13/24 Test #13: pcg_cli ..........................   Passed    3.81 sec
+      Start 15: reml_invariance
+14/24 Test #15: reml_invariance ..................   Passed    1.20 sec
+      Start 16: omics_scaling
+15/24 Test #16: omics_scaling ....................   Passed    0.87 sec
+      Start 17: stochastic_faces
+16/24 Test #17: stochastic_faces .................   Passed    1.07 sec
+      Start 18: equivalent_design
+17/24 Test #18: equivalent_design ................   Passed    0.61 sec
+      Start 19: score_units
+18/24 Test #19: score_units ......................   Passed    0.57 sec
+      Start 20: retry_budget
+19/24 Test #20: retry_budget .....................   Passed    0.63 sec
+      Start 21: stream_plan
+20/24 Test #14: probe_replay .....................   Passed    7.65 sec
+      Start 22: cache_versions
+21/24 Test #22: cache_versions ...................   Passed    0.31 sec
+      Start 23: interior_modes
+22/24 Test #23: interior_modes ...................   Passed    0.77 sec
+      Start 24: validation_population
+23/24 Test #24: validation_population ............   Passed    0.27 sec
+24/24 Test #21: stream_plan ......................   Passed   24.80 sec
+
+100% tests passed, 0 tests failed out of 24
+
+Total Test time (real) =  38.87 sec

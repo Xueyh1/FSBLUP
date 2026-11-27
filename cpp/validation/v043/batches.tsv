@@ -1,0 +1,7 @@
+batch	release	asan	tsan	mem	iterations	fd	threads
+b1	100% tests passed, 0 tests failed out of 23	100% tests passed, 0 tests failed out of 23	100% tests passed, 0 tests failed out of 23	100% tests passed, 0 tests failed out of 23	1000	4	1
+b2	100% tests passed, 0 tests failed out of 24	100% tests passed, 0 tests failed out of 24	100% tests passed, 0 tests failed out of 24	100% tests passed, 0 tests failed out of 24	1000	4	1
+b3	100% tests passed, 0 tests failed out of 24	100% tests passed, 0 tests failed out of 24	100% tests passed, 0 tests failed out of 24	100% tests passed, 0 tests failed out of 24	1000	4	1
+b4	100% tests passed, 0 tests failed out of 24	100% tests passed, 0 tests failed out of 24	100% tests passed, 0 tests failed out of 24	100% tests passed, 0 tests failed out of 24	1000	4	1
+b5	100% tests passed, 0 tests failed out of 24	100% tests passed, 0 tests failed out of 24	100% tests passed, 0 tests failed out of 24	100% tests passed, 0 tests failed out of 24	1000	4	1
+bfinal	100% tests passed, 0 tests failed out of 24	100% tests passed, 0 tests failed out of 24	100% tests passed, 0 tests failed out of 24	100% tests passed, 0 tests failed out of 24	1000	4	1

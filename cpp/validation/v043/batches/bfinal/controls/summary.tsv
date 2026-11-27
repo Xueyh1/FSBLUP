@@ -1,0 +1,7 @@
+detector	case	expected_exit	actual_exit
+san	clean	0	0
+san	leak	1	1
+tsan	safe	0	0
+tsan	race	66	66
+mem	clean	0	0
+mem	leak	99	99

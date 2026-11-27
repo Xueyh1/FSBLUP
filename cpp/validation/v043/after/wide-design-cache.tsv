@@ -1,0 +1,2 @@
+mode	backend	feature_bytes	read_calls	read_seconds	decode_seconds	verified_cache_bytes	storage	targets	active_component_ids	calibration_bytes	training_preload_bytes	training_bytes	cross_bytes	requested_backend	certification_backend	fallback_reason	certification_mib	planned_panel	requested_rhs	actual_panel	panel_workspace_bytes	rhs_split_calls	rhs_split_reason	max_coefficient_bytes
+A	operator	4516800000	78160	0.98210850400000005	53.693409101	5761209	stream	80	0	0	0	4514400000	2400000	operator	operator		0	1	60	6	7420160	3	workspace budget	2880000

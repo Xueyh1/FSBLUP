@@ -25,6 +25,14 @@ srun -n1 -c2 --mem=1G bash validation/v043/replay.sh "$RELEASE_FSBLUP" after
 sbatch -n1 -c2 --mem=3G validation/v043/batch.sh new-audit "$(git rev-parse HEAD)"
 ```
 
+### 逐批工程验收与发布状态
+
+每批从独立 Git 快照构建，分开运行 Release、ASan+UBSan（开启 LSan）、独立 TSan 和 Valgrind Memcheck 全套 CTest。第一批四套各通过 23 项，之后各批及最终快照四套各通过 24 项。每批另运行干净、故意泄漏 79 B 与故意数据竞争的对照，以及预热后 1000 轮同进程寿命测试。最终起末均为 4 个 FD、1 个线程；RSS 从 20640 到 20864 KiB，末次活跃分配 414288 B。独立 Memcheck 寿命进程直接、间接及可能丢失均为 0 B，退出时可达 165818 B。系统 BLAS 使用发行版库。[逐批汇总](validation/v043/batches.tsv) · [对应提交](validation/v043/revisions.tsv) · [最终控制结果与原始测试日志](validation/v043/batches/bfinal)
+
+开发期在仍有编译任务的共享增量目录中更新头文件，曾出现非法指针及缓存测试进程异常。正式验证改为各提交独立解包、独立构建，这些异常未在独立快照复现。原始记录包保留开发期错误日志。配对耗时表导出器也修正了旧版缺少新增计量列时的 KeyError，最终表来自修正后完整重跑。仓库表格在末列为空时可用引号表示，原始包保留输出字节。
+
+x86_64 Linux 发布 ELF 指纹为 `c7f1d0f2696fe4d116e55d7ce32cc59339b1ee22031f894bab1e01908d554aff`。在无 R 的只读 UBI 9 Minimal、glibc 2.34 环境实际执行了 nearPD、缓存拟合与官方 1407 个体 C 模式示例；相对独立 Matrix 参照的修正 K 最大元素差 5.98×10⁻¹⁴，同 λ 下独立 GLS 最大差 5.46×10⁻¹¹。[官方对照](validation/v043/official.json)
+
 ## 0.4.2 数值与工程验收
 
 开发分支起点与开工时远程 cpp 均为 `80a56ba6ad025d6dbdcd638b6efc6acae63b3851`。在更改源码前，用该提交的 Release 二进制执行审查包的全部五个脚本与原有 16 项 CTest。脚本成功运行时也会报告所调用 fsblup 的非零退出码。仓库对照表用引号标识末列空字段，交付的原始记录压缩包保留脚本输出字节。[环境与指纹](validation/v042/before/environment.txt) · [原始重放输出](validation/v042/before) · [修复后重放](validation/v042/after)
