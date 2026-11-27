@@ -1,0 +1,5 @@
+parallel	threads	cap_MiB	exit	wall_s	peak_RSS_KiB	alpha_beta	error
+blas	1	32	0	0.38164	16496	0,0	
+weights	1	32	1	0.01792			--memory-mb insufficient for one candidate workspace
+weights	2	32	1	0.018			--memory-mb insufficient for one candidate workspace
+weights	1	100	0	0.38151	17008	0,0	

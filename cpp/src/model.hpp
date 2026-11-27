@@ -29,6 +29,8 @@ struct Iteration {
   size_t probes = 0;
   double paired_se = 0, depth_error = 0;
   int information_rank = -1;
+  double face_gain = NAN;
+  size_t face_matvec = 0;
 };
 struct FitAudit {
   std::string context, status;

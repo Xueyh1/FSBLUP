@@ -147,7 +147,7 @@ void write_audits(const fs::path &dir, const std::vector<FitAudit> &audits,
   write_file(dir / (prefix + "reml_trace.tsv"), [&](std::ostream &f) {
     f << "context\testimator\ttrace\titeration\tVu\tVe\tcontrast_loglik\tscore_"
          "g\tscore_e\tstep\tbacktracks\tAI_rcond\tprobes\tpaired_se\tdepth_"
-         "error_per_n\tAI_rank\tstatus\n";
+         "error_per_n\tAI_rank\tstatus\tpaired_face_gain\tface_matvec\n";
     for (auto &a : audits)
       for (auto &r : a.steps)
         f << a.context << '\t' << o.varcomp << '\t' << o.trace << '\t'
@@ -161,7 +161,8 @@ void write_audits(const fs::path &dir, const std::vector<FitAudit> &audits,
           << r.paired_se << '\t' << r.depth_error << '\t'
           << (r.information_rank < 0 ? "NA"
                                      : std::to_string(r.information_rank))
-          << '\t' << r.status << '\n';
+          << '\t' << r.status << '\t' << r.face_gain << '\t' << r.face_matvec
+          << '\n';
   });
 }
 const char *policy_name(PdPolicy policy) {

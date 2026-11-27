@@ -96,7 +96,9 @@ Estimates estimate_exact(const Contrast &c, size_t n, double g, double e,
     g *= q;
     e *= q;
   }
-  if (peaks.size() > 1) {
+  if (peaks.size() > 1 || (!peaks.empty() && !boundary.empty() &&
+                           peaks.front().lik > best_face().lik &&
+                           best_face().lik >= evaluate(g, e).lik - 1e-10)) {
     auto best = std::max_element(
         peaks.begin(), peaks.end(),
         [](const auto &a, const auto &b) { return a.lik < b.lik; });

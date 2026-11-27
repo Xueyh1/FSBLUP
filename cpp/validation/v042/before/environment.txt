@@ -1,0 +1,14 @@
+80a56ba6ad025d6dbdcd638b6efc6acae63b3851
+gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)
+clang version 22.1.8 (CentOS 22.1.8-1.el9)
+#define ARMA_VERSION_MAJOR 11
+#define ARMA_VERSION_MINOR 4
+#define ARMA_VERSION_PATCH 2
+	libopenblasp.so.0 => /lib64/libopenblasp.so.0 (0x00007ff54d200000)
+	libcrypto.so.3 => /lib64/libcrypto.so.3 (0x00007ff54cc00000)
+44b9f8b65ee124efe12692d8bdbf735575c3857103535c47633dd81bce09fa8e  runs/v042/fsblup-041
+9dd841842c95b82f863ede4456214ad0346317892d5c61002cba65addb5fda79  ../../FSBLUP_0.4.1_Review_Replay.zip
+Model name:                              Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz
+Core(s) per socket:                      16
+Socket(s):                               2
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1

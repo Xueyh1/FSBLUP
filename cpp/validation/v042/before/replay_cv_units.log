@@ -1,0 +1,5 @@
+solver	trait_scale	candidates	alpha	beta	rmse	coverage
+pcg	1	27	0.4375	0.1875	3.6795327327161811e-13	complete
+direct	1	27	0.4375	0.1875	4.8019279727784367e-17	complete
+pcg	0.001	19	0.375	0.125	2.3311690955419986e-05	complete
+direct	0.001	19	0.375	0.125	2.3311690955632151e-05	complete

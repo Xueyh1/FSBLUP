@@ -1,0 +1,38 @@
+Internal ctest changing into directory: /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/build
+Test project /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/build
+      Start  1: core
+ 1/16 Test  #1: core .............................   Passed    0.04 sec
+      Start  2: numerical_cli
+ 2/16 Test  #2: numerical_cli ....................   Passed    0.50 sec
+      Start  3: solver_shift
+ 3/16 Test  #3: solver_shift .....................   Passed    0.07 sec
+      Start  4: nearpd_core
+ 4/16 Test  #4: nearpd_core ......................   Passed    0.03 sec
+      Start  5: nearpd_cli
+ 5/16 Test  #5: nearpd_cli .......................   Passed    0.17 sec
+      Start  6: nearpd_nested
+ 6/16 Test  #6: nearpd_nested ....................   Passed    0.09 sec
+      Start  7: output_failure
+ 7/16 Test  #7: output_failure ...................   Passed    0.10 sec
+      Start  8: solver_range
+ 8/16 Test  #8: solver_range .....................   Passed    0.11 sec
+      Start  9: io_limits
+ 9/16 Test  #9: io_limits ........................   Passed    0.02 sec
+      Start 10: concurrent_replay
+10/16 Test #10: concurrent_replay ................   Passed    0.32 sec
+      Start 11: repeated_lifetime
+11/16 Test #11: repeated_lifetime ................   Passed    0.20 sec
+      Start 12: pcg_reml_math
+12/16 Test #12: pcg_reml_math ....................   Passed    0.04 sec
+      Start 13: pcg_cli
+13/16 Test #13: pcg_cli ..........................   Passed    0.56 sec
+      Start 14: probe_replay
+14/16 Test #14: probe_replay .....................   Passed    1.19 sec
+      Start 15: reml_invariance
+15/16 Test #15: reml_invariance ..................   Passed    0.21 sec
+      Start 16: omics_scaling
+16/16 Test #16: omics_scaling ....................   Passed    0.16 sec
+
+100% tests passed, 0 tests failed out of 16
+
+Total Test time (real) =   3.80 sec

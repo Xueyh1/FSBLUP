@@ -272,7 +272,7 @@ mat solve_probes(System &s, const mat &b) {
 struct State {
   vec score, lik;
   mat information, samples;
-  double depth;
+  double depth, ypy;
 };
 State evaluate(ProbeSet &probes, const mat &x, const vec &y, double g, double e,
                size_t count, bool score, bool verify = false) {
@@ -301,6 +301,7 @@ State evaluate(ProbeSet &probes, const mat &x, const vec &y, double g, double e,
     const auto &xr = probes.design_rule->second,
                &yr = probes.response_rule->second;
     offset = data(xr, yr);
+    s.ypy = arma::accu(yr.weights / (g * yr.nodes + e));
     s.depth = std::abs(offset - data(probes.design_rule->first,
                                      probes.response_rule->first)) /
               x.n_rows;
@@ -334,6 +335,7 @@ State evaluate(ProbeSet &probes, const mat &x, const vec &y, double g, double e,
     auto &p = *probes.projection;
     const vec &r = probes.response;
     offset = probes.offset_term;
+    s.ypy = arma::dot(y, probes.response);
     if (score && !probes.quad.empty()) {
       quadratic = probes.quad;
       rank_correction = probes.rank_term;
@@ -423,6 +425,49 @@ State evaluate(ProbeSet &probes, const mat &x, const vec &y, double g, double e,
   audit.trace_se_e = se[1];
   return s;
 }
+// Profile the common covariance scale analytically at each variance ratio.
+// The same ordered probes supply both likelihoods, including control variates.
+struct FaceCheck {
+  double g = 0, e = 0, gain = -INFINITY;
+  bool unresolved = false;
+};
+FaceCheck compare_face(ProbeSet &p, const mat &x, const vec &y,
+                       const vec &face_lik, double scale, double km,
+                       size_t count, int it, double design_logdet) {
+  FaceCheck best;
+  double df = x.n_rows - x.n_cols;
+  for (int j = -8; j <= 8; ++j) {
+    double ratio = std::exp2(j * 1.5) * km;
+    double g = scale / (km + ratio), e = ratio * g;
+    auto before = p.audit.matvec;
+    auto state = evaluate(p, x, y, g, e, count, false);
+    double factor = state.ypy / df;
+    require(factor > 0 && std::isfinite(factor),
+            "invalid profiled stochastic scale");
+    g *= factor;
+    e *= factor;
+    vec lik = state.lik +
+              .5 * (design_logdet + state.ypy - df - df * std::log(factor));
+    vec diff = lik - face_lik;
+    double gain = arma::mean(diff),
+           se = arma::stddev(diff) / std::sqrt(double(count));
+    double error = 3.5 * se + state.depth * x.n_rows +
+                   64 * arma::datum::eps * (1 + std::abs(arma::mean(lik)));
+    auto &step = p.audit.steps.emplace_back(
+        Iteration{it, 0, g, e, arma::mean(lik), NAN, NAN, 0, 0,
+                  "face-challenger", count, se, state.depth});
+    step.face_gain = gain;
+    step.face_matvec = p.audit.matvec - before;
+    if (gain > error && state.depth <= p.o.slq_tol && gain > best.gain) {
+      best.g = g;
+      best.e = e;
+      best.gain = gain;
+    }
+    if (gain + error >= 0)
+      best.unresolved = true;
+  }
+  return best;
+}
 } // namespace
 Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
                               double g, double e, const FitOptions &o,
@@ -447,6 +492,7 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
   double zero_score = .5 * (arma::dot(residual, ky) / (scale * scale) -
                             (probes.traceK - arma::accu(qx % kq)) / scale);
   double zero_lik = -.5 * df * (std::log(scale) + 1);
+  bool restarted = false;
   int it = 0;
   while (it <= o.max_reml) {
     a.updates = it;
@@ -461,14 +507,28 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
         o.varcomp == "ai-reml" ? int(arma::rank(cur.information)) : -1;
     bool boundary_g = g == 0, boundary_e = e <= floor;
     vec se = .5 * vec{a.trace_se_g, a.trace_se_e} % units / df / 1.;
-    if (zero_score * units[0] / df < -o.score_tol && cur.score[0] < 0 &&
-        zero_lik >=
-            lik + 1.96 * arma::stddev(cur.lik) / std::sqrt(double(count))) {
-      a.steps.push_back({it, 0, g, e, lik, cur.score[0], cur.score[1], 0, 0,
-                         "active-set", count, a.paired_se, cur.depth,
-                         info_rank});
-      a.steps.push_back({it + 1, 0, 0, scale, zero_lik, zero_score, 0, 0, 0,
-                         "genetic-zero", count, 0, 0});
+    const bool zero_kkt = zero_score * units[0] / df < -o.score_tol;
+    if (zero_kkt && cur.score[0] < 0 && zero_lik >= lik && !restarted) {
+      vec face_lik(count, arma::fill::value(zero_lik));
+      auto best = compare_face(probes, x, y, face_lik, scale, km, count, it,
+                               design_logdet);
+      if (std::isfinite(best.gain)) {
+        a.steps.push_back({it, 0, best.g, best.e, zero_lik + best.gain, NAN,
+                           NAN, 0, 0, "interior-restart", count});
+        g = best.g;
+        e = best.e;
+        restarted = true;
+        continue;
+      }
+      if (best.unresolved) {
+        require(count < o.max_probes,
+                "stochastic precision insufficient: probe budget exhausted "
+                "comparing boundary");
+        count = std::min(2 * count, o.max_probes);
+        continue;
+      }
+      a.steps.push_back({it, 0, 0, scale, zero_lik, zero_score, 0, 0, 0,
+                         "genetic-zero", count});
       return {0, scale, zero_lik, "genetic-zero"};
     }
     bool converged = true;
@@ -564,6 +624,20 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
                     o.score_tol,
                 "stochastic precision insufficient: SLQ derivative vs PCG; "
                 "increase --slq-depth");
+      }
+      if (boundary_g || boundary_e) {
+        auto best = compare_face(probes, x, y, cur.lik + .5 * design_logdet,
+                                 scale, km, count, it, design_logdet);
+        if (std::isfinite(best.gain) && !restarted) {
+          g = best.g;
+          e = best.e;
+          restarted = true;
+          continue;
+        }
+        if (best.unresolved) {
+          more();
+          continue;
+        }
       }
       string status = boundary_g   ? "approx-genetic-zero"
                       : boundary_e ? "approx-residual-floor"

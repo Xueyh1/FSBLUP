@@ -1,0 +1,8 @@
+raw files: /tmp/fsblup-design-l_p3t2yw
+basis	cond_X	solver	varcomp	exit	status	Vu	Ve	contrast_loglik
+orthogonal	1.0	direct	profile-reml	0	interior	2.0000000575781622	0.99999986488148129	-7.1245401001460573
+orthogonal	1.0	pcg	ai-reml	0	interior	2.0000000000000382	0.99999999999986	-7.1245401001460564
+orthogonal	1.0	pcg	fixed	0	fixed	2	1	nan
+near-collinear	19999999.993269812	direct	profile-reml	0	interior	2.0000000867872267	0.99999979633664882	-7.1245401001460555
+near-collinear	19999999.993269812	pcg	ai-reml	1	fsblup: final fit failed: ill-conditioned fixed-effect system			
+near-collinear	19999999.993269812	pcg	fixed	1	fsblup: final fit failed: ill-conditioned fixed-effect system			
