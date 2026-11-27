@@ -561,9 +561,10 @@ mat columns(const Apply &apply, size_t n, const uvec &idx, size_t batch) {
   return result;
 }
 void check_space(double bytes, double cap, const string &purpose) {
-  require(bytes / 1048576. <= cap,
-          purpose + " needs " + std::to_string(bytes / 1048576.) +
-              " MiB; raise --memory-mb or reduce the conditioning group");
+  if (bytes / 1048576. > cap)
+    throw CertificationUnavailable(
+        purpose + " needs " + std::to_string(bytes / 1048576.) +
+        " MiB; raise --memory-mb or reduce the conditioning group");
 }
 } // namespace
 TrainKernel PopulationKernel::restrict(const Ids &targets, const uvec &train,
@@ -628,8 +629,36 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
   };
   vec gd = g.diag.elem(pg), od = o.diag.elem(po);
   if (mode_name == "A") {
-    require(a >= 0 && b >= 0 && a + b <= 1,
-            "common-coverage feature operator requires simplex weights");
+    if (a < 0 || b < 0 || a + b > 1) {
+      // Materialize only the requested weighted covariance. The three input
+      // layers remain operators, including on the full-population check.
+      double bytes = (policy == PdPolicy::strict ? 40. : 144.) * n * n +
+                     320. * whole + 128. * n + 64. * m;
+      if (bytes > cap * 1048576.)
+        throw CertificationUnavailable(
+            "signed-weight certification exceeds --memory-mb");
+      size_t batch = 1;
+      size_t chunk = std::max(
+          1., std::min(double(block), (cap * 1048576. - bytes) / (32. * m)));
+      auto raw = [&](const mat &v) -> mat {
+        mat y = (1 - a - b) * ap(v);
+        if (b)
+          y += b * g.apply(v, chunk, io, &pg);
+        if (a)
+          y += a * o.apply(v, chunk, io, &po);
+        return y;
+      };
+      mat covariance = columns(raw, n, arma::regspace<uvec>(0, n - 1), batch);
+      symmetrize(covariance, arma::abs(covariance).max());
+      PdBlock pd{"K"};
+      auto k = std::make_shared<const mat>(
+          adjust_covariance(covariance, policy, PdDiagnostics::full, pd));
+      PopulationKernel result{
+          pop, k->diag(), [k](const mat &v) -> mat { return *k * v; }, {pd}};
+      result.retained_mib =
+          (8. * n * n + 320. * whole + 128. * n + 64. * m) / 1048576.;
+      return result;
+    }
     auto result = finish((1 - a - b) * ad + b * gd + a * od,
                          [ap, gp, op, a, b](const mat &v) -> mat {
                            mat z(v.n_rows, v.n_cols, arma::fill::zeros);
@@ -677,10 +706,27 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
   }
   auto s = positions(pop, oids);
   size_t ns = s.n_elem, ng = gids.size();
+  auto dense_certificate = [&]() {
+    check_space(192. * n * n + 320. * whole + 64. * m, cap,
+                "whole-kernel certification");
+    auto materialize = [&](const Apply &fn, size_t count) {
+      return columns(fn, count, arma::regspace<uvec>(0, count - 1), 1);
+    };
+    Layers local{{pop, materialize(ap, n)},
+                 {gids, materialize(gp, ng)},
+                 {oids, materialize(op, ns)}};
+    auto fused = FusionPlan(local).combine(a, b, nullptr, policy);
+    auto k = std::make_shared<const mat>(std::move(fused.k));
+    PopulationKernel result{pop, k->diag(),
+                            [k](const mat &v) -> mat { return *k * v; },
+                            std::move(fused.pd_blocks)};
+    result.retained_mib =
+        (8. * n * n + 320. * whole + 128. * n + 64. * m) / 1048576.;
+    return result;
+  };
   if (mode_name == "B") {
-    require(
-        b >= 0 && b <= 1,
-        "B operator certification requires beta in [0,1]; use dense backend");
+    if (b < 0 || b > 1)
+      return dense_certificate();
     check_space(96. * n * ns + 128. * ns * ns + 256. * whole, cap,
                 "B Gss/regression workspace");
     auto gcols = columns(gp, n, s, std::min<size_t>(8, ns));
@@ -707,8 +753,8 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
       double slope = (arma::mean(arma::mean(base)) - gm) / contrast;
       t = a * (slope * o_mat + (om - slope * gm)) + (1 - a) * base;
     }
-    require(arma::chol(l, t), "B replacement block lacks PSD certificate; use "
-                              "dense backend for whole-kernel PD check");
+    if (!arma::chol(l, t))
+      return dense_certificate();
     mat delta = t - base;
     vec hd = gd;
     hd.elem(u) += arma::sum((reg * delta) % reg, 1);
@@ -774,6 +820,9 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
                           na == n ? PdDiagnostics::full
                                   : PdDiagnostics::certification);
   } catch (const std::runtime_error &ex) {
+    if (string(ex.what()).find("complete-population nearPD required") !=
+        string::npos)
+      return dense_certificate();
     throw std::runtime_error(
         "mode C: " + string(ex.what()) +
         "; full dense MiB=" + std::to_string(160. * n * n / 1048576.) +

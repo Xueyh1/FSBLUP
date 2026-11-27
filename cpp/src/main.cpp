@@ -112,9 +112,9 @@ int main(int argc, char **argv) {
     } catch (const TuningFailure &e) {
       write_file(dest.work / "failure.txt",
                  [&](std::ostream &f) { f << e.what() << '\n'; });
-      tm.mark("failed_search");
+      tm.mark("failed_fit_or_search");
       tm.save(dest.work);
-      logger.info(string("stage=failed reason=") + e.what());
+      logger.error(string("stage=failed reason=") + e.what());
       publish();
       throw;
     } catch (const std::exception &e) {

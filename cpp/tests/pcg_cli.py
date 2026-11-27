@@ -113,6 +113,13 @@ def run(root):
         [*matrices, *weights, *model, *fixed, "--pcg-maxiter", 1],
         "iteration-limit",
     )
+    failed = root / "limit-log"
+    invoke(root, "limit-log", "fit",
+           [*matrices,*weights,*model,*fixed,"--pcg-maxiter",1,"--log-file",failed/"logs"/"fit.log"],
+           "iteration-limit")
+    assert "iteration-limit" in (failed/"logs"/"fit.log").read_text()
+    assert "iteration-limit" in rows(failed/"pcg_summary.tsv")[0]["status"]
+    assert not (failed/"model.tsv").exists() and not (failed/"predictions.tsv").exists()
     invoke(
         root,
         "emlimit",
@@ -165,6 +172,16 @@ def run(root):
     )
     for name in ("search.tsv", "predictions.tsv", "folds.tsv"):
         assert (serial / name).read_bytes() == (parallel / name).read_bytes()
+    dense = invoke(root,"dense-cv","fit",[("dense" if v=="operator" else v) for v in tune])
+    for x,y in zip(rows(dense/"search.tsv"),rows(serial/"search.tsv")):
+        assert (x["alpha"],x["beta"],x["full_status"]) == (y["alpha"],y["beta"],y["full_status"])
+        for key in x:
+            if key.startswith("r1f") and x["valid"]=="1":
+                assert abs(float(x[key])-float(y[key]))<1e-7
+    assert rows(serial/"tuning.tsv")[0]["search_coverage"]=="complete"
+    assert rows(serial/"tuning.tsv")[0]["requested_domain"]=="simplex"
+    assert any("cv_fold_fit_sum" in line and float(line.split("\t")[1])>0
+               for line in (serial/"timing.tsv").read_text().splitlines())
     with (root / "cacheA" / "G.bin").open("ab") as corrupt:
         corrupt.write(b"x")
     invoke(

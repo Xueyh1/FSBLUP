@@ -131,7 +131,8 @@ void write_audits(const fs::path &dir, const std::vector<FitAudit> &audits,
         << '\t' << a.centered_solves << '\t' << o.rtol << '\t' << o.atol << '\t'
         << o.seed << '\t' << (o.probe_lanczos ? "lanczos+pcg-check" : "pcg")
         << '\t' << o.record_every << '\t' << a.updates << '\t' << a.cross_rhs
-        << '\t' << a.status << '\t' << o.initial_g << '\t' << o.initial_e << '\n';
+        << '\t' << a.status << '\t' << o.initial_g << '\t' << o.initial_e
+        << '\n';
   });
   write_file(dir / (prefix + "reml_trace.tsv"), [&](std::ostream &f) {
     f << "context\testimator\ttrace\titeration\tVu\tVe\tcontrast_loglik\tscore_"
@@ -361,7 +362,7 @@ Labels labels_from_file(const fs::path &path, const Ids &ids, bool &temporal) {
 struct Tuning {
   Search search;
   Ids fold_columns;
-  string metric, coverage;
+  string metric, coverage, domain;
 };
 Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
             const Layers &layers, const fs::path &dir, PdPolicy policy,
@@ -481,44 +482,24 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
           ev.scores.resize(folds.size(), NAN);
           try {
             auto prepared = cache->prepare(refs, a, b, policy, worker_cap);
-            size_t count = 0;
-            double sum = 0;
-            for (size_t j = 0; j < folds.size(); ++j) {
-              const auto &f = folds[j];
-              if (!f.reason.empty())
-                continue;
-              FitAudit &audit = ev.fits.emplace_back();
-              audit.context = "alpha=" + std::to_string(a) +
-                              " beta=" + std::to_string(b) +
-                              " repeat=" + std::to_string(f.repeat) +
-                              " fold=" + std::to_string(f.fold);
-              auto op = prepared.restrict(
-                  refs, f.train, worker_cap,
-                  solver_workspace(f.train.n_elem, refs.size(), p.x.n_cols,
-                                   fold_options) /
-                      1048576.);
-              auto m = fit_operator(op, x.rows(f.train), x, y.elem(f.train),
-                                    fold_options, audit);
-              ev.scores[j] =
-                  score(truth.elem(f.valid), m.u.elem(f.valid), metric);
-              require(std::isfinite(ev.scores[j]), "nonfinite score");
-              sum += ev.scores[j];
-              ++count;
-            }
-            require(count > 0, "no scorable fold");
-            ev.value = sum / count;
-            ev.correction = "operator,jitter=1e-6";
-            for (auto &block : prepared.diagnostics) {
-              ev.nearpd_blocks += block.projected;
-              ev.max_relative_norm_f =
-                  std::max(ev.max_relative_norm_f, block.relative_norm_f);
-            }
+            record_pd(ev, prepared.diagnostics);
+            assess_folds(ev, folds, truth, metric, a, b,
+                         [&](const Fold &f, FitAudit &audit) {
+                           auto op = prepared.restrict(
+                               refs, f.train, worker_cap,
+                               solver_workspace(f.train.n_elem, refs.size(),
+                                                p.x.n_cols, fold_options) /
+                                   1048576.);
+                           return fit_operator(op, x.rows(f.train), x,
+                                               y.elem(f.train), fold_options,
+                                               audit);
+                         });
+          } catch (const CertificationUnavailable &ex) {
+            ev.reason = ex.what();
+            ev.outcome = "uncertified";
           } catch (const std::runtime_error &ex) {
             ev.reason = ex.what();
-            if (!ev.fits.empty()) {
-              ev.reason = ev.fits.back().context + ": " + ev.reason;
-              ev.fits.back().status = ev.reason;
-            }
+            ev.outcome = "invalid";
           }
           return ev;
         }
@@ -546,7 +527,8 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
   for (const auto &f : folds)
     columns.push_back("r" + std::to_string(f.repeat) + "f" +
                       std::to_string(f.fold));
-  return {std::move(result), std::move(columns), metric, l.counts()};
+  return {std::move(result), std::move(columns), metric, l.counts(),
+          opt.has("strict-simplex") ? "simplex" : "historical"};
 }
 // Validate complete-cohort covariance in CV score order. Candidate phenotypes
 // never enter this check; the common case constructs just one full kernel.
@@ -558,6 +540,10 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
   const auto &trials = result.trials;
   const size_t count = trials.size();
   Ids rejected(count);
+  bool partial = std::any_of(trials.begin(), trials.end(), [](const Trial &v) {
+    return v.result.outcome == "uncertified";
+  });
+  std::vector<bool> uncertified(count, false);
   size_t selected = count, failures = 0;
   Fusion kernel;
   std::optional<FusionPlan> full;
@@ -581,10 +567,16 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
       if (cache) {
         selected_operator =
             cache->prepare(layers.a.ids, v.alpha, v.beta, policy, cap);
-        kernel.correction = "operator,jitter=1e-6";
+        kernel.correction = pd_summary(selected_operator->diagnostics);
         kernel.pd_blocks = selected_operator->diagnostics;
       } else
         kernel = full->combine(v.alpha, v.beta, nullptr, policy);
+    } catch (const CertificationUnavailable &ex) {
+      partial = true;
+      uncertified[next] = true;
+      rejected[next] = ex.what();
+      ++failures;
+      continue;
     } catch (const std::runtime_error &ex) {
       rejected[next] = string("full coverage: ") + ex.what();
       ++failures;
@@ -602,7 +594,8 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
     trace
         << "\treference_best\tfull_status\tfull_reason\tpd_policy\tnearpd_"
            "blocks\tmax_relative_normF\tfull_nearpd_blocks\tfull_max_relative_"
-           "normF\n";
+           "normF\trequested_domain\tbackend\tcandidate_status\tsearch_"
+           "coverage\n";
     for (size_t i = 0; i < count; ++i) {
       const auto &v = trials[i];
       const auto &e = v.result;
@@ -629,7 +622,9 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
         trace << '\t' << projected << '\t' << relative;
       } else
         trace << "\tNA\tNA";
-      trace << '\n';
+      trace << '\t' << t.domain << '\t' << (cache ? "operator" : "dense")
+            << '\t' << (uncertified[i] ? "uncertified" : e.outcome) << '\t'
+            << (partial ? "partial" : "complete") << '\n';
     }
   });
   if (!std::isfinite(result.best))
@@ -642,11 +637,13 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
     f << "metric\tselection_score\tstop\tcoverage\treference_best_alpha"
          "\treference_best_beta\treference_best_score\tselected_"
          "alpha\tselected_beta"
-         "\tfull_rejections\n"
+         "\tfull_rejections\trequested_domain\tbackend\tsearch_coverage\n"
       << t.metric << '\t' << trials[selected].result.value << '\t'
       << result.stop << '\t' << field(t.coverage) << '\t' << result.alpha
       << '\t' << result.beta << '\t' << result.best << '\t' << alpha << '\t'
-      << beta << '\t' << failures << '\n';
+      << beta << '\t' << failures << '\t' << t.domain << '\t'
+      << (cache ? "operator" : "dense") << '\t'
+      << (partial ? "partial" : "complete") << '\n';
   });
   return kernel;
 }
@@ -703,9 +700,8 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
     auto backend = opt.get("cache-backend", "auto");
     require(backend == "auto" || backend == "operator" || backend == "dense",
             "invalid cache backend");
-    bool compatible = !opt.has("write-k") &&
-                      opt.get("varcomp", "ai-reml") != "profile-reml" &&
-                      (mode != "A" || (a >= 0 && b >= 0 && a + b <= 1));
+    bool compatible =
+        !opt.has("write-k") && opt.get("varcomp", "ai-reml") != "profile-reml";
     double full_need = (160. * cache->ped.ids.size() * cache->ped.ids.size() +
                         64. * cache->ped.ids.size() *
                             std::max(cache->g.columns, cache->o.columns)) /
@@ -788,7 +784,7 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
     require(fixed, "fuse requires alpha and beta");
   if (fixed && use_op) {
     selected_operator = cache->prepare(l.a.ids, a, b, policy, cap);
-    k.correction = "operator,jitter=1e-6";
+    k.correction = pd_summary(selected_operator->diagnostics);
     k.pd_blocks = selected_operator->diagnostics;
   } else if (fixed)
     k = fuse(l, a, b, nullptr, policy);
@@ -806,6 +802,8 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
       << policy_name(policy) << '\n';
   });
   write_pd(dir, k, policy);
+  if (tm.log)
+    tm.log->info("scope=full pd=" + k.correction);
   if (cmd == "fuse" || opt.has("write-k")) {
     require(fs::space(dir).available > 52. * l.a.ids.size() * l.a.ids.size(),
             "insufficient disk space for --write-k");
@@ -845,12 +843,11 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
       } else
         m = fit_dense(k.k, idx, p.x, p.y, p.ref, opts, audit);
     } catch (const std::runtime_error &error) {
-      if (fixed)
+      if (fixed && audit.steps.empty() && audit.rhs == 0)
         throw;
       audit.status = error.what();
       write_audits(dir, {audit}, opts, "");
-      throw TuningFailure("final fit failed at selected weights: " +
-                          audit.status);
+      throw TuningFailure("final fit failed: " + audit.status);
     }
     if (cache)
       write_file(dir / "cache_usage.tsv", [&](auto &f) {

@@ -90,57 +90,74 @@ double score(const vec &truth, const vec &pred, const string &metric) {
   }
   return pairs / (neg * pos);
 }
+void record_pd(Evaluation &e, const std::vector<PdBlock> &blocks) {
+  e.correction = pd_summary(blocks);
+  for (const auto &block : blocks) {
+    e.timing.add(block.timing);
+    e.nearpd_blocks += block.projected;
+    e.max_relative_norm_f =
+        std::max(e.max_relative_norm_f, block.relative_norm_f);
+  }
+}
+void assess_folds(Evaluation &e, const std::vector<Fold> &folds,
+                  const vec &truth, const string &metric, double a, double b,
+                  const std::function<Model(const Fold &, FitAudit &)> &fit) {
+  e.scores.resize(folds.size(), NAN);
+  require(!folds.empty(), "no validation folds");
+  double sum = 0;
+  size_t count = 0;
+  for (size_t j = 0; j < folds.size(); ++j) {
+    const auto &f = folds[j];
+    if (!f.reason.empty())
+      continue;
+    auto &audit = e.fits.emplace_back();
+    audit.context = "alpha=" + std::to_string(a) +
+                    " beta=" + std::to_string(b) +
+                    " repeat=" + std::to_string(f.repeat) +
+                    " fold=" + std::to_string(f.fold);
+    auto tick = std::chrono::steady_clock::now();
+    try {
+      auto model = fit(f, audit);
+      e.scores[j] = score(truth.elem(f.valid), model.u.elem(f.valid), metric);
+      require(std::isfinite(e.scores[j]), "nonfinite validation score");
+    } catch (const CertificationUnavailable &ex) {
+      e.outcome = "uncertified";
+      e.reason = audit.context + ": " + ex.what();
+      audit.status = e.reason;
+    } catch (const std::runtime_error &ex) {
+      e.reason = audit.context + ": " + ex.what();
+      e.outcome = "fit_failed";
+      audit.status = e.reason;
+    }
+    e.fold_seconds +=
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - tick)
+            .count();
+    if (!e.reason.empty())
+      return;
+    sum += e.scores[j];
+    ++count;
+  }
+  require(count > 0, "no scorable fold: " + folds.front().reason);
+  e.value = sum / count;
+  require(std::isfinite(e.value), "nonfinite mean validation score");
+}
 Evaluation evaluate_weight(const FusionPlan &plan, double a, double b,
                            const mat &x, const vec &y, const vec &truth,
                            const std::vector<Fold> &folds, const string &metric,
                            PdPolicy policy, const FitOptions *options) {
   Evaluation e;
   e.scores.resize(folds.size(), NAN);
-  string location;
   try {
-    require(!folds.empty(), "no validation folds");
     auto k = plan.combine(a, b, nullptr, policy, PdDiagnostics::tuning);
-    e.correction = k.correction;
-    for (const auto &block : k.pd_blocks) {
-      e.timing.add(block.timing);
-      e.nearpd_blocks += block.projected;
-      e.max_relative_norm_f =
-          std::max(e.max_relative_norm_f, block.relative_norm_f);
-    }
-    double sum = 0;
-    size_t count = 0;
-    for (size_t j = 0; j < folds.size(); ++j) {
-      auto &f = folds[j];
-      if (!f.reason.empty())
-        continue;
-      location = "repeat " + std::to_string(f.repeat) + " fold " +
-                 std::to_string(f.fold) + ": ";
-      auto tick = std::chrono::steady_clock::now();
-      Model fit;
-      if (options) {
-        auto &audit = e.fits.emplace_back();
-        audit.context = "alpha=" + std::to_string(a) +
-                        " beta=" + std::to_string(b) +
-                        " repeat=" + std::to_string(f.repeat) +
-                        " fold=" + std::to_string(f.fold);
-        fit = fit_model(k.k, x, y, f.train, *options, audit);
-      } else
-        fit = solve(k.k, x, y, f.train);
-      e.scores[j] = score(truth.elem(f.valid), fit.u.elem(f.valid), metric);
-      e.fold_seconds +=
-          std::chrono::duration<double>(std::chrono::steady_clock::now() - tick)
-              .count();
-      require(std::isfinite(e.scores[j]), "nonfinite validation score");
-      sum += e.scores[j];
-      ++count;
-    }
-    require(count > 0, "no scorable fold: " + folds.front().reason);
-    e.value = sum / count;
-    require(std::isfinite(e.value), "nonfinite mean validation score");
+    record_pd(e, k.pd_blocks);
+    assess_folds(
+        e, folds, truth, metric, a, b, [&](const Fold &f, FitAudit &audit) {
+          return options ? fit_model(k.k, x, y, f.train, *options, audit)
+                         : solve(k.k, x, y, f.train);
+        });
   } catch (const std::runtime_error &ex) {
-    e.reason = location + ex.what();
-    if (!e.fits.empty())
-      e.fits.back().status = e.reason;
+    e.outcome = "invalid";
+    e.reason = ex.what();
   }
   return e;
 }

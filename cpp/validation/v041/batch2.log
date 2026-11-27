@@ -1,0 +1,38 @@
+srun: job 31059 queued and waiting for resources
+srun: job 31059 has been allocated resources
+Internal ctest changing into directory: /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/build
+Test project /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/build
+      Start  1: core
+ 1/15 Test  #1: core .............................   Passed    0.02 sec
+      Start  2: numerical_cli
+ 2/15 Test  #2: numerical_cli ....................   Passed    0.51 sec
+      Start  3: solver_shift
+ 3/15 Test  #3: solver_shift .....................   Passed    0.07 sec
+      Start  4: nearpd_core
+ 4/15 Test  #4: nearpd_core ......................   Passed    0.01 sec
+      Start  5: nearpd_cli
+ 5/15 Test  #5: nearpd_cli .......................   Passed    0.21 sec
+      Start  6: nearpd_nested
+ 6/15 Test  #6: nearpd_nested ....................   Passed    0.09 sec
+      Start  7: output_failure
+ 7/15 Test  #7: output_failure ...................   Passed    0.11 sec
+      Start  8: solver_range
+ 8/15 Test  #8: solver_range .....................   Passed    0.13 sec
+      Start  9: io_limits
+ 9/15 Test  #9: io_limits ........................   Passed    0.01 sec
+      Start 10: concurrent_replay
+10/15 Test #10: concurrent_replay ................   Passed    0.35 sec
+      Start 11: repeated_lifetime
+11/15 Test #11: repeated_lifetime ................   Passed    0.04 sec
+      Start 12: pcg_reml_math
+12/15 Test #12: pcg_reml_math ....................   Passed    0.01 sec
+      Start 13: pcg_cli
+13/15 Test #13: pcg_cli ..........................   Passed    0.60 sec
+      Start 14: probe_replay
+14/15 Test #14: probe_replay .....................   Passed    1.21 sec
+      Start 15: reml_invariance
+15/15 Test #15: reml_invariance ..................   Passed    0.22 sec
+
+100% tests passed, 0 tests failed out of 15
+
+Total Test time (real) =   3.60 sec

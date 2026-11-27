@@ -278,6 +278,22 @@ uvec outside(size_t n, const uvec &s) {
   return arma::find(mask);
 }
 } // namespace
+string pd_summary(const std::vector<PdBlock> &blocks) {
+  string result;
+  for (const auto &d : blocks) {
+    if (!result.empty())
+      result += ";";
+    result += d.block + ":jitter=1e-6";
+    if (d.projected)
+      result += ",nearPD";
+  }
+  return result;
+}
+mat adjust_covariance(const mat &raw, PdPolicy policy,
+                      PdDiagnostics diagnostics, PdBlock &d) {
+  string note;
+  return adjusted(raw, note, policy, diagnostics, d);
+}
 FusionPlan::Nested::Nested(const Layers &l) {
   const mat &a = l.a.values;
   s = positions(l.a.ids, l.o.ids);
@@ -384,7 +400,8 @@ Fusion FusionPlan::combine(double alpha, double beta, BlockAudit *audit,
   symmetrize(raw, arma::abs(raw).max());
   pd_blocks.push_back({"K"});
   mat k = adjusted(raw, note, policy, diagnostics, pd_blocks.back());
-  return {std::move(raw), std::move(k), std::move(note), std::move(pd_blocks)};
+  return {std::move(raw), std::move(k), pd_summary(pd_blocks),
+          std::move(pd_blocks)};
 }
 Fusion fuse(const Layers &layers, double alpha, double beta, BlockAudit *audit,
             PdPolicy policy, PdDiagnostics diagnostics) {

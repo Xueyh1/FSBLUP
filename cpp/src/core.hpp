@@ -64,6 +64,11 @@ struct PdBlock {
   PdTimes timing;
   double norm_f = 0., relative_norm_f = 0., max_abs_change = 0.;
 };
+struct CertificationUnavailable : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
+string pd_summary(const std::vector<PdBlock> &);
+mat adjust_covariance(const mat &, PdPolicy, PdDiagnostics, PdBlock &);
 struct Fusion {
   mat raw, k;
   string correction;
@@ -128,7 +133,7 @@ std::vector<Fold> split(const Labels &, bool temporal, const vec &truth,
 double score(const vec &, const vec &, const string &);
 struct Evaluation {
   double value = NAN;
-  string reason, correction;
+  string reason, correction, outcome = "evaluated";
   std::vector<double> scores;
   std::vector<FitAudit> fits;
   double fold_seconds = 0;
@@ -136,6 +141,10 @@ struct Evaluation {
   size_t nearpd_blocks = 0;
   double max_relative_norm_f = 0.;
 };
+void assess_folds(Evaluation &, const std::vector<Fold> &, const vec &truth,
+                  const string &metric, double a, double b,
+                  const std::function<Model(const Fold &, FitAudit &)> &);
+void record_pd(Evaluation &, const std::vector<PdBlock> &);
 Evaluation evaluate_weight(const FusionPlan &plan, double a, double b,
                            const mat &x, const vec &y, const vec &truth,
                            const std::vector<Fold> &folds, const string &metric,
