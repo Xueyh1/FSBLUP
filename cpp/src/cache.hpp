@@ -13,7 +13,7 @@ struct PedigreeOperator {
 };
 struct CacheIO {
   std::atomic<size_t> requested_rhs{0}, actual_panel{0}, planned_panel{0},
-      peak_temporary_bytes{0};
+      peak_temporary_bytes{0}, split_calls{0}, coefficient_bytes{0};
   std::atomic<uint64_t> phase_bytes[4]{};
   std::atomic<uint64_t> bytes{0}, reads{0}, read_ns{0}, decode_ns{0};
 };
@@ -25,8 +25,8 @@ struct FeatureFile {
   mat lookup;
   size_t stride = 0;
   void read(std::ifstream &, size_t rows, double *dest, CacheIO &) const;
-  mat apply(const mat &x, size_t block, CacheIO &io,
-            const uvec *subset = nullptr) const;
+  mat apply(const mat &x, size_t block, CacheIO &io, const uvec *subset,
+            double available_bytes) const;
 };
 using Product = std::function<mat(const mat &)>;
 struct ProductPair {

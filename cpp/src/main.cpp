@@ -9,7 +9,7 @@ const char *help = R"(fsblup 0.4.3
   fuse --A A --G G --O O --alpha AWT --beta BWT --out DIR
   fit --pheno TABLE --id ID --trait TRAIT --A A --G G --O O --out DIR
       [--alpha AWT --beta BWT | --folds N --repeats N --seed N | --folds-file FILE
-       | --year CUTOFF | --ngen CUTOFF] [--metric cor|rmse|auc] [--score-col COL] [--score-policy relative|legacy] [--retry-probes TOTAL] [--retry-policy rounds|legacy] [--search-policy neighborhood|grid|legacy]
+       | --year CUTOFF | --ngen CUTOFF] [--metric cor|rmse|auc] [--score-col COL] [--score-policy relative|legacy] [--retry-probes TOTAL] [--retry-policy rounds|legacy] [--search-policy neighborhood|grid|legacy] [--mode-policy compare|local]
       [--covar COL,...] [--factor COL,...] [--parallel blas|weights] [--strict-simplex] [--write-k]
   fit: --solver pcg|direct --varcomp ai-reml|em-reml|profile-reml|fixed
        --trace exact|hutchinson --probes N --max-probes N --probe-seed N --slq-depth N --lambda L --preconditioner jacobi|identity|nystrom --pcg-rtol R --pcg-atol A

@@ -436,6 +436,7 @@ FaceCheck compare_candidates(ProbeSet &p, const mat &x, const vec &y,
                              size_t count, int it, double design_logdet,
                              double face_depth = 0,
                              double incumbent_ratio = 0) {
+  auto started = std::chrono::steady_clock::now();
   FaceCheck best;
   double df = x.n_rows - x.n_cols;
   struct Sample {
@@ -445,7 +446,7 @@ FaceCheck compare_candidates(ProbeSet &p, const mat &x, const vec &y,
   for (int j = -8; j <= 8; ++j) {
     double ratio = std::exp2(j * 1.5) * km;
     double g = scale / (km + ratio), e = ratio * g;
-    auto before = p.audit.matvec;
+    auto before = p.audit.matvec, rhs_before = p.audit.rhs;
     auto state = evaluate(p, x, y, g, e, count, false, !incumbent_ratio);
     double factor = state.ypy / df;
     require(factor > 0 && std::isfinite(factor),
@@ -465,6 +466,7 @@ FaceCheck compare_candidates(ProbeSet &p, const mat &x, const vec &y,
                   count, se, state.depth});
     step.face_gain = gain;
     step.face_matvec = p.audit.matvec - before;
+    step.comparison_rhs = p.audit.rhs - rhs_before;
     samples.push_back({ratio, g, e, gain, error, state.depth});
   }
   // Insert the incumbent itself so a grid node in its basin is not
@@ -489,6 +491,57 @@ FaceCheck compare_candidates(ProbeSet &p, const mat &x, const vec &y,
     if (v.gain + v.error >= 0 || (!incumbent_ratio && v.depth > p.o.slq_tol))
       best.unresolved = true;
   }
+  p.audit.comparison_seconds +=
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - started)
+          .count();
+  return best;
+}
+// For a small complement it is cheaper to bracket competing basins on
+// Q2'KQ2 once than to solve p systems at each trial ratio. Only a
+// separated, superior peak needs a common-probe verification.
+FaceCheck contrast_rival(ProbeSet &p, const mat &x, const vec &y, double km,
+                         double g, double e, int it) {
+  auto start = std::chrono::steady_clock::now();
+  mat q, r, rotation;
+  require(arma::qr(q, r, x), "contrast QR failed");
+  mat basis = q.tail_cols(x.n_rows - x.n_cols);
+  mat kernel = basis.t() * p.k.apply(basis);
+  p.audit.matvec += basis.n_cols;
+  vec eigen;
+  require(arma::eig_sym(eigen, rotation, .5 * kernel + .5 * kernel.t()),
+          "contrast screening eigensolve failed");
+  vec energy = arma::square(rotation.t() * basis.t() * y);
+  auto profile = [&](double ratio) {
+    vec d = eigen + ratio;
+    require(d.min() > 0, "nonpositive contrast covariance in comparison");
+    double u = arma::mean(energy / d);
+    return std::pair{
+        u, -.5 * (eigen.n_elem * (1 + std::log(u)) + arma::accu(arma::log(d)))};
+  };
+  double center = e / g, base = profile(center).second;
+  FaceCheck best;
+  for (int side : {-1, 1}) {
+    double valley = 0;
+    for (int j = 1; j <= 16; ++j) {
+      double ratio = center * std::exp2(side * j);
+      auto [u, lik] = profile(ratio);
+      double gain = lik - base;
+      auto &step = p.audit.steps.emplace_back(Iteration{
+          it, 0, u, u * ratio, lik, NAN, NAN, 0, 0, "contrast-challenger"});
+      step.face_gain = gain;
+      step.face_matvec = (side == -1 && j == 1) ? basis.n_cols : 0;
+      double tol = 64 * arma::datum::eps * (1 + std::abs(base));
+      if (valley < -tol && gain > tol && gain > best.gain) {
+        best.g = u;
+        best.e = u * ratio;
+        best.gain = gain;
+      }
+      valley = std::min(valley, gain);
+    }
+  }
+  p.audit.comparison_seconds +=
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
+          .count();
   return best;
 }
 } // namespace
@@ -539,6 +592,10 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
     if (squared <= tol * tol) {
       require(x.n_rows <= 64, "stochastic precision insufficient: contrast "
                               "kernel indistinguishable from scalar identity");
+      double roundoff = 32 * arma::datum::eps * std::sqrt(double(x.n_rows)) *
+                        std::max(1., km);
+      require(squared <= roundoff * roundoff,
+              "near-unidentifiable contrast kernel at numerical resolution");
       double part = scale / (1 + scalar);
       a.steps.push_back(
           {0, 0, part, part, zero_lik, 0, 0, 0, 0, "unidentifiable"});
@@ -699,11 +756,42 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
           continue;
         }
       }
-      if (!boundary_g && !boundary_e) {
-        auto rival = compare_candidates(
-            probes, x, y, cur.lik + .5 * design_logdet, scale, km, count, it,
-            design_logdet, cur.depth, e / g);
+      if (o.compare_interiors && !boundary_g && !boundary_e) {
+        bool compact =
+            x.n_cols > 1 && x.n_rows <= 128 && df <= 32 && df < x.n_cols;
+        auto rival =
+            compact
+                ? contrast_rival(probes, x, y, km, g, e, it)
+                : compare_candidates(probes, x, y, cur.lik + .5 * design_logdet,
+                                     scale, km, count, it, design_logdet,
+                                     cur.depth, e / g);
         if (std::isfinite(rival.gain)) {
+          if (o.probe_lanczos || compact) {
+            auto tick = std::chrono::steady_clock::now();
+            auto mv = a.matvec, rhs = a.rhs;
+            auto incumbent = evaluate(probes, x, y, g, e, count, false, true);
+            auto trial =
+                evaluate(probes, x, y, rival.g, rival.e, count, false, true);
+            vec difference = trial.lik - incumbent.lik;
+            rival.gain = arma::mean(difference);
+            double se = arma::stddev(difference) / std::sqrt(double(count));
+            double uncertainty =
+                3.5 * se + (trial.depth + incumbent.depth) * x.n_rows;
+            auto &entry = a.steps.emplace_back(Iteration{
+                it, 0, rival.g, rival.e,
+                arma::mean(trial.lik) + .5 * design_logdet, NAN, NAN, 0, 0,
+                "pcg-checked-challenger", count, se, trial.depth});
+            entry.face_gain = rival.gain;
+            entry.face_matvec = a.matvec - mv;
+            entry.comparison_rhs = a.rhs - rhs;
+            a.comparison_seconds += std::chrono::duration<double>(
+                                        std::chrono::steady_clock::now() - tick)
+                                        .count();
+            if (rival.gain <= uncertainty) {
+              more();
+              continue;
+            }
+          }
           require(interior_restarts < 2, "stochastic precision insufficient: "
                                          "interior restart budget exhausted");
           ++interior_restarts;
@@ -720,9 +808,11 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
         a.steps.push_back({it, 0, g, e, lik, cur.score[0], cur.score[1], 0, 0,
                            "compared-interiors", count});
       }
-      string status = boundary_g   ? "approx-genetic-zero"
-                      : boundary_e ? "approx-residual-floor"
-                                   : "approx-interior";
+      string status = boundary_g ? "approx-genetic-zero"
+                      : boundary_e
+                          ? "approx-residual-floor"
+                          : (o.compare_interiors ? "approx-interior"
+                                                 : "approx-interior-local");
       a.steps.push_back({it, 0, g, e, lik, cur.score[0], cur.score[1], 0,
                          condition, status, count, a.paired_se, cur.depth,
                          info_rank});

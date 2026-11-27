@@ -52,6 +52,12 @@ FitOptions fit_options(const Options &opt, Timing &tm) {
     require(o.initial_g > 0 && o.initial_e > 0,
             "positive initial variances required");
   }
+  auto mode_policy = opt.get("mode-policy", "compare");
+  require(mode_policy == "compare" || mode_policy == "local",
+          "unknown mode policy");
+  require(!opt.has("mode-policy") || o.trace == "hutchinson",
+          "--mode-policy requires stochastic REML");
+  o.compare_interiors = mode_policy == "compare";
   if (o.trace == "hutchinson") {
     require(o.solver == "pcg", "Hutchinson requires PCG");
     string backend = opt.get("probe-solver", "pcg");
@@ -123,7 +129,8 @@ void write_audits(const fs::path &dir, const std::vector<FitAudit> &audits,
          "workspace_mib\tinitial_Vu\tinitial_"
          "Ve\tpreconditioner\tprec_rank\tzero_rhs\tresidual_restarts\tcentered_"
          "solves\trtol\tatol\tprobe_seed\tprobe_solver\ttrace_"
-         "stride\tupdates\tcross_rhs\tstatus\trequested_Vu\trequested_Ve\n";
+         "stride\tupdates\tcross_rhs\tstatus\trequested_Vu\trequested_"
+         "Ve\tlikelihood_comparison_s\tmode_policy\n";
     for (auto &a : audits)
       f << a.context << '\t' << o.solver << '\t' << o.varcomp << '\t' << a.n
         << '\t' << a.rhs << '\t' << a.matvec << '\t' << a.max_iterations << '\t'
@@ -142,12 +149,17 @@ void write_audits(const fs::path &dir, const std::vector<FitAudit> &audits,
         << o.seed << '\t' << (o.probe_lanczos ? "lanczos+pcg-check" : "pcg")
         << '\t' << o.record_every << '\t' << a.updates << '\t' << a.cross_rhs
         << '\t' << a.status << '\t' << o.initial_g << '\t' << o.initial_e
+        << '\t' << a.comparison_seconds << '\t'
+        << (o.trace == "hutchinson"
+                ? (o.compare_interiors ? "compare" : "local")
+                : "exact")
         << '\n';
   });
   write_file(dir / (prefix + "reml_trace.tsv"), [&](std::ostream &f) {
     f << "context\testimator\ttrace\titeration\tVu\tVe\tcontrast_loglik\tscore_"
          "g\tscore_e\tstep\tbacktracks\tAI_rcond\tprobes\tpaired_se\tdepth_"
-         "error_per_n\tAI_rank\tstatus\tpaired_face_gain\tface_matvec\n";
+         "error_per_n\tAI_rank\tstatus\tpaired_face_gain\tface_"
+         "matvec\tcomparison_rhs\n";
     for (auto &a : audits)
       for (auto &r : a.steps)
         f << a.context << '\t' << o.varcomp << '\t' << o.trace << '\t'
@@ -162,7 +174,7 @@ void write_audits(const fs::path &dir, const std::vector<FitAudit> &audits,
           << (r.information_rank < 0 ? "NA"
                                      : std::to_string(r.information_rank))
           << '\t' << r.status << '\t' << r.face_gain << '\t' << r.face_matvec
-          << '\n';
+          << '\t' << r.comparison_rhs << '\n';
   });
 }
 const char *policy_name(PdPolicy policy) {
@@ -749,9 +761,10 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
       << (selected < count ? alpha : NAN) << '\t'
       << (selected < count ? beta : NAN) << '\t' << failures << '\t' << t.domain
       << '\t' << (cache ? "operator" : "dense") << '\t'
-      << (partial ? "partial" : "complete") << '\t' << t.score_policy << '\t'
-      << t.rule.scale << "\t1e-12\t1e-4\t" << (partial ? "partial" : "complete")
-      << '\t' << count << '\t' << scored << '\t' << t.scorable << '\t'
+      << (!count ? "not_checked" : (partial ? "partial" : "complete")) << '\t'
+      << t.score_policy << '\t' << t.rule.scale << "\t1e-12\t1e-4\t"
+      << (!count ? "not_checked" : (partial ? "partial" : "complete")) << '\t'
+      << count << '\t' << scored << '\t' << t.scorable << '\t'
       << physical_completed << '\t' << probe_failed << '\t' << numerical << '\t'
       << invalid << '\t' << unavailable << '\t' << t.budget << '\t' << spent
       << '\t' << completed << '\t' << attempted << '\t'
@@ -893,7 +906,7 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
              "bytes\ttraining_bytes\tcross_bytes\trequested_"
              "backend\tcertification_backend\tfallback_reason\tcertification_"
              "mib\tplanned_panel\trequested_rhs\tactual_panel\tpanel_workspace_"
-             "bytes\n"
+             "bytes\trhs_split_calls\trhs_split_reason\tmax_coefficient_bytes\n"
           << mode << '\t' << (use_op ? "operator" : "dense") << '\t'
           << cache->io.bytes.load() << '\t' << cache->io.reads.load() << '\t'
           << cache->io.read_ns.load() * 1e-9 << '\t'
@@ -916,12 +929,19 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
           << '\t' << cache->io.planned_panel.load() << '\t'
           << cache->io.requested_rhs.load() << '\t'
           << cache->io.actual_panel.load() << '\t'
-          << cache->io.peak_temporary_bytes.load();
+          << cache->io.peak_temporary_bytes.load() << '\t'
+          << cache->io.split_calls.load() << '\t'
+          << (cache->io.split_calls.load() ? "workspace budget" : "none")
+          << '\t' << cache->io.coefficient_bytes.load();
         f << '\n';
       });
   };
   if (cmd == "fit") {
     opts = fit_options(opt, tm);
+    require(!opt.has("retry-policy") || (!fixed && opts.trace == "hutchinson"),
+            "--retry-policy requires stochastic automatic tuning");
+    require(!opt.has("search-policy") || !fixed,
+            "--search-policy requires automatic tuning");
     require(!opt.has("retry-probes") || (!fixed && opts.trace == "hutchinson"),
             "--retry-probes requires stochastic automatic tuning");
     require(!opt.has("score-policy") || !fixed,

@@ -7,6 +7,9 @@ double solver_workspace(size_t n, size_t targets, size_t p,
   if (o.preconditioner == "nystrom")
     work += 48. * n * std::min(double(n), double(o.rank));
   if (o.trace == "hutchinson") {
+    if (o.compare_interiors && p > 1 && n <= 128 && n > p && n - p <= 32 &&
+        n - p < p)
+      work += 48. * n * n;
     double basis = o.full_reorth ? std::min(double(n), 2. * o.slq_depth) : 5.;
     work += 8. * n *
                 (basis + 12. * o.batch +

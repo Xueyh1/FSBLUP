@@ -7,6 +7,12 @@
 #include <queue>
 namespace fsb {
 namespace {
+void record_max(std::atomic<size_t> &target, size_t value) {
+  auto old = target.load(std::memory_order_relaxed);
+  while (old < value &&
+         !target.compare_exchange_weak(old, value, std::memory_order_relaxed)) {
+  }
+}
 enum class ReadPhase { calibration, preload, training, cross };
 thread_local ReadPhase read_phase = ReadPhase::calibration;
 struct ScopedReadPhase {
@@ -480,41 +486,60 @@ void FeatureFile::read(std::ifstream &f, size_t rows, double *dest,
   }
 }
 mat FeatureFile::apply(const mat &x, size_t block, CacheIO &io,
-                       const uvec *subset) const {
-  std::ifstream f(path, std::ios::binary);
-  require(bool(f), "unreadable feature cache");
-  mat coeff(columns, x.n_cols, arma::fill::zeros), result(x.n_rows, x.n_cols);
-  // A scattered training vector can have very few nonzero rows. Only those
-  // rows contribute to W'v. The cross pass still returns every target row.
-  uvec nz = arma::find(arma::any(x != 0, 1));
-  for (int pass = 0; pass < 2; ++pass) {
-    const bool sparse = pass == 0 && nz.n_elem < x.n_rows / 4;
-    const size_t count = sparse ? nz.n_elem : x.n_rows;
-    for (size_t first = 0; first < count; first += block) {
-      size_t len = std::min(block, count - first);
-      auto source = [&](size_t i) {
-        auto j = sparse ? nz[first + i] : first + i;
-        return subset ? (*subset)[j] : j;
-      };
-      mat w(columns, len, arma::fill::none);
-      for (size_t j = 0; j < len;) {
-        size_t end = j + 1;
-        auto start = source(j);
-        while (end < len && source(end) == start + end - j)
-          ++end;
-        f.seekg(start * stride);
-        read(f, end - j, w.colptr(j), io);
-        j = end;
+                       const uvec *subset, double available_bytes) const {
+  auto shape = rhs_shape(columns, x.n_rows, x.n_cols,
+                         std::min(block, size_t(x.n_rows)), available_bytes);
+  record_max(io.requested_rhs, x.n_cols);
+  record_max(io.actual_panel, shape.rhs);
+  record_max(io.coefficient_bytes, 8 * shape.rhs * columns);
+  record_max(io.peak_temporary_bytes, shape.bytes);
+  if (shape.rhs < x.n_cols)
+    ++io.split_calls;
+  auto multiply = [&](const mat &x) -> mat {
+    size_t block = shape.rows;
+    std::ifstream f(path, std::ios::binary);
+    require(bool(f), "unreadable feature cache");
+    mat coeff(columns, x.n_cols, arma::fill::zeros), result(x.n_rows, x.n_cols);
+    // A scattered training vector can have very few nonzero rows. Only those
+    // rows contribute to W'v. The cross pass still returns every target row.
+    uvec nz = arma::find(arma::any(x != 0, 1));
+    for (int pass = 0; pass < 2; ++pass) {
+      const bool sparse = pass == 0 && nz.n_elem < x.n_rows / 4;
+      const size_t count = sparse ? nz.n_elem : x.n_rows;
+      for (size_t first = 0; first < count; first += block) {
+        size_t len = std::min(block, count - first);
+        auto source = [&](size_t i) {
+          auto j = sparse ? nz[first + i] : first + i;
+          return subset ? (*subset)[j] : j;
+        };
+        mat w(columns, len, arma::fill::none);
+        for (size_t j = 0; j < len;) {
+          size_t end = j + 1;
+          auto start = source(j);
+          while (end < len && source(end) == start + end - j)
+            ++end;
+          f.seekg(start * stride);
+          read(f, end - j, w.colptr(j), io);
+          j = end;
+        }
+        if (pass == 1)
+          result.rows(first, first + len - 1) = w.t() * coeff;
+        else if (sparse)
+          coeff += w * x.rows(nz.subvec(first, first + len - 1));
+        else
+          coeff += w * x.rows(first, first + len - 1);
       }
-      if (pass == 1)
-        result.rows(first, first + len - 1) = w.t() * coeff;
-      else if (sparse)
-        coeff += w * x.rows(nz.subvec(first, first + len - 1));
-      else
-        coeff += w * x.rows(first, first + len - 1);
     }
+    return result;
+  };
+  if (shape.rhs >= x.n_cols)
+    return multiply(x);
+  mat output(x.n_rows, x.n_cols);
+  for (size_t j = 0; j < x.n_cols; j += shape.rhs) {
+    size_t end = std::min(size_t(x.n_cols), j + shape.rhs) - 1;
+    output.cols(j, end) = multiply(x.cols(j, end));
   }
-  return result;
+  return output;
 }
 void prepare_cache(const fs::path &pedigree, const fs::path &snp,
                    const fs::path &omics, bool fpkm, const fs::path &dir,
@@ -570,9 +595,13 @@ Cache::Cache(const fs::path &dir, double cap)
 }
 Layers Cache::materialize(double cap) {
   budget(ped.ids.size(), std::max(g.columns, o.columns), cap);
+  double space = cap * 1048576. - 24. * ped.ids.size() * ped.ids.size() -
+                 64. * std::max(g.columns, o.columns);
   return {{ped.ids, ped.apply(arma::eye(ped.ids.size(), ped.ids.size()))},
-          {g.ids, g.apply(arma::eye(g.ids.size(), g.ids.size()), 64, io)},
-          {o.ids, o.apply(arma::eye(o.ids.size(), o.ids.size()), 64, io)}};
+          {g.ids, g.apply(arma::eye(g.ids.size(), g.ids.size()), 64, io,
+                          nullptr, space)},
+          {o.ids, o.apply(arma::eye(o.ids.size(), o.ids.size()), 64, io,
+                          nullptr, space)}};
 }
 namespace {
 using Apply = std::function<mat(const mat &)>;
@@ -599,12 +628,6 @@ mat feature_rows(const FeatureFile &f, std::ifstream &in, const uvec &ix,
     j = end;
   }
   return w;
-}
-void record_max(std::atomic<size_t> &target, size_t value) {
-  auto old = target.load(std::memory_order_relaxed);
-  while (old < value &&
-         !target.compare_exchange_weak(old, value, std::memory_order_relaxed)) {
-  }
 }
 ProductPair feature_products(const FeatureFile &f, const uvec &train,
                              const uvec &targets, const uvec &local_train,
@@ -653,7 +676,10 @@ ProductPair feature_products(const FeatureFile &f, const uvec &train,
   auto multiply = [=, &io, m = f.columns,
                    n = targets.n_elem](const mat &v, bool cross) -> mat {
     auto shape = rhs_shape(m, n, v.n_cols, block, available);
+    if (shape.rhs < v.n_cols)
+      ++io.split_calls;
     record_max(io.requested_rhs, v.n_cols);
+    record_max(io.coefficient_bytes, 8 * shape.rhs * m);
     record_max(io.actual_panel, shape.rhs);
     record_max(io.peak_temporary_bytes, shape.bytes);
     mat out(cross ? n : train.n_elem, v.n_cols);
@@ -801,11 +827,14 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
   Ids gids = intersect(pop, g.ids), oids = intersect(pop, o.ids);
   require(!oids.empty(), "reference coverage degenerates: no omics");
   auto pg = positions(g.ids, gids), po = positions(o.ids, oids);
-  Apply gp = [this, pg, block](const mat &x) {
-    return g.apply(x, block, io, &pg);
+  double space = cap * 1048576. - 320. * whole - 128. * n - 64. * m;
+  if (mode_name == "B" && a != 0)
+    space -= 24. * n * po.n_elem + 32. * po.n_elem * po.n_elem;
+  Apply gp = [this, pg, block, space](const mat &x) {
+    return g.apply(x, block, io, &pg, space);
   };
-  Apply op = [this, po, block](const mat &x) {
-    return o.apply(x, block, io, &po);
+  Apply op = [this, po, block, space](const mat &x) {
+    return o.apply(x, block, io, &po, space);
   };
   vec gd = g.diag.elem(pg), od = o.diag.elem(po);
   auto indexed = [&](double pedigree_weight, double b, double a) {
@@ -878,9 +907,9 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
       auto raw = [&](const mat &v) -> mat {
         mat y = (1 - a - b) * ap(v);
         if (b)
-          y += b * g.apply(v, chunk, io, &pg);
+          y += b * g.apply(v, chunk, io, &pg, cap * 1048576. - bytes);
         if (a)
-          y += a * o.apply(v, chunk, io, &po);
+          y += a * o.apply(v, chunk, io, &po, cap * 1048576. - bytes);
         return y;
       };
       mat covariance = columns(raw, n, arma::regspace<uvec>(0, n - 1), batch);
@@ -890,6 +919,9 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
           adjust_covariance(covariance, policy, PdDiagnostics::full, pd));
       PopulationKernel result{
           pop, k->diag(), [k](const mat &v) -> mat { return *k * v; }, {pd}};
+      result.certification = "dense-signed";
+      result.fallback_reason = "signed weights";
+      result.certification_mib = bytes / 1048576.;
       result.retained_mib =
           (8. * n * n + 320. * whole + 128. * n + 64. * m) / 1048576.;
       return result;
@@ -916,9 +948,16 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
     auto materialize = [&](const Apply &fn, size_t count) {
       return columns(fn, count, arma::regspace<uvec>(0, count - 1), 1);
     };
+    double read_budget = cap * 1048576. - 32. * n * n - 320. * whole - 64. * m;
+    Apply dg = [&](const mat &v) {
+      return g.apply(v, block, io, &pg, read_budget);
+    };
+    Apply do_ = [&](const mat &v) {
+      return o.apply(v, block, io, &po, read_budget);
+    };
     Layers local{{pop, materialize(ap, n)},
-                 {gids, materialize(gp, ng)},
-                 {oids, materialize(op, ns)}};
+                 {gids, materialize(dg, ng)},
+                 {oids, materialize(do_, ns)}};
     auto fused = FusionPlan(local).combine(a, b, nullptr, policy);
     auto k = std::make_shared<const mat>(std::move(fused.k));
     PopulationKernel result{pop, k->diag(),
@@ -1049,8 +1088,15 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
   auto sub = subset_apply(n, ia, ap);
   mat ac = columns(sub, na, arma::regspace<uvec>(0, na - 1),
                    std::min<size_t>(4, na));
-  mat gg = columns(gp, ng, arma::regspace<uvec>(0, ng - 1), 4),
-      oo = columns(op, ns, arma::regspace<uvec>(0, ns - 1), 4);
+  double read_budget = space - 16. * na * na - 8. * ng * ng;
+  Apply gc = [&](const mat &v) {
+    return g.apply(v, block, io, &pg, read_budget);
+  };
+  Apply oc = [&](const mat &v) {
+    return o.apply(v, block, io, &po, read_budget);
+  };
+  mat gg = columns(gc, ng, arma::regspace<uvec>(0, ng - 1), 4),
+      oo = columns(oc, ns, arma::regspace<uvec>(0, ns - 1), 4);
   Layers layers{
       {names, std::move(ac)}, {gids, std::move(gg)}, {oids, std::move(oo)}};
   Fusion fusion;
@@ -1061,8 +1107,10 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
                                   : PdDiagnostics::certification);
   } catch (const std::runtime_error &ex) {
     if (string(ex.what()).find("complete-population nearPD required") !=
-        string::npos)
+        string::npos) {
+      layers = {};
       return dense_certificate("complete-population nearPD required", na);
+    }
     throw std::runtime_error(
         "mode C: " + string(ex.what()) +
         "; full dense MiB=" + std::to_string(160. * n * n / 1048576.) +

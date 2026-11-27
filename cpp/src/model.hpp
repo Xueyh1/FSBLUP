@@ -15,6 +15,7 @@ struct FitOptions {
   int max_pcg = 2000, max_reml = 200, log_every = 10, max_backtracks = 54;
   size_t probes = 16, max_probes = 256, slq_depth = 12, batch = 8,
          slq_batch = 1;
+  bool compare_interiors = true;
   bool full_reorth = true, probe_lanczos = false, trace_rhs = false;
   double memory_mb = 8192;
   unsigned seed = 42;
@@ -30,7 +31,7 @@ struct Iteration {
   double paired_se = 0, depth_error = 0;
   int information_rank = -1;
   double face_gain = NAN;
-  size_t face_matvec = 0;
+  size_t face_matvec = 0, comparison_rhs = 0;
 };
 struct FitAudit {
   std::string context, status;
@@ -43,6 +44,7 @@ struct FitAudit {
          gls_seconds = 0, predict_seconds = 0;
   double initial_vu = NAN, initial_ve = NAN, final_lik = NAN, prec_seconds = 0;
   size_t probes = 0, slq_matvec = 0, trials = 0;
+  double comparison_seconds = 0;
   double trace_identity_error = 0, logdet_se = 0, trace_se_g = 0,
          trace_se_e = 0, paired_se = 0, depth_error = 0, logratio_se = 0;
   std::vector<Iteration> steps;

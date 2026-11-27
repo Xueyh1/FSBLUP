@@ -1,4 +1,4 @@
-import csv,subprocess,sys,tempfile
+import math,csv,subprocess,sys,tempfile
 from pathlib import Path
 def rows(p):
     with p.open() as f:return list(csv.DictReader(f,delimiter="\t"))
@@ -22,3 +22,23 @@ with tempfile.TemporaryDirectory() as tmp:
     for method in ["ai-reml","em-reml"]:
         out=root/(method+"flat");m=fit(root/"K",root/"y",["--varcomp",method],out)
         assert "unidentifiable" in m["status"] and rows(out/"pcg_summary.tsv")[0]["updates"]=="0"
+    local=fit(d/"K.tsv",d/"y.tsv",["--mode-policy","local"],root/"local")
+    assert local["status"]=="approx-interior-local" and abs(float(local["contrast_loglik"])+13.26684619876)<1e-6
+
+    for perturb in (0,.25):
+        with (root/"K").open("w") as f:
+            print("id",*ids,sep="\t",file=f)
+            for i,id in enumerate(ids):
+                print(id,*[.5*(i==j)+.2+.3*(-1)**(i+j)+(perturb*i if i==j else 0) for j in range(8)],sep="\t",file=f)
+        with (root/"design").open("w") as f:
+            print("id","y","x",sep="\t",file=f)
+            for i,id in enumerate(ids):print(id,math.sin(i*i),(-1)**i,sep="\t",file=f)
+        out=root/("covar"+str(perturb))
+        if not perturb:
+            m=fit(root/"K",root/"design",["--covar","x"],out)
+            assert m["status"].startswith("unidentifiable") and rows(out/"pcg_summary.tsv")[0]["updates"]=="0"
+        else:
+            args=[sys.argv[1],"fit",*[v for c in "AGO" for v in ("--"+c,root/"K")],"--pheno",root/"design","--id","id","--trait","y","--covar","x","--alpha","0","--beta","0","--trace","hutchinson","--out",out]
+            proc=subprocess.run(args,capture_output=True,text=True)
+            assert "unidentifiable" not in proc.stderr
+            if not proc.returncode: assert "unidentifiable" not in rows(out/"model.tsv")[0]["status"]
