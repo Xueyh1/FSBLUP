@@ -557,12 +557,23 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
       return;
     size_t ceiling = opts.max_probes;
     string history;
+    size_t start = 0;
     for (;;) {
       ev.probe_limit = ceiling;
       if (!history.empty())
         history += " | ";
       history += std::to_string(ceiling) + ":" +
                  (ev.reason.empty() ? "ok" : ev.reason);
+      size_t rhs = 0, mv = 0, probes = 0;
+      for (size_t j = start; j < ev.fits.size(); ++j) {
+        rhs += ev.fits[j].rhs;
+        mv += ev.fits[j].matvec;
+        probes += ev.fits[j].probes;
+      }
+      start = ev.fits.size();
+      history += " [rhs=" + std::to_string(rhs) +
+                 ",matvec=" + std::to_string(mv) +
+                 ",probes=" + std::to_string(probes) + "]";
       ev.attempts = history;
       if (ev.reason.find("probe budget exhausted") == string::npos ||
           !scorable || ceiling > remaining / scorable / 2)
@@ -744,9 +755,10 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
       << t.metric << '\t'
       << (selected < count ? trials[selected].result.value : NAN) << '\t'
       << result.stop << '\t' << field(t.coverage) << '\t' << result.alpha
-      << '\t' << result.beta << '\t' << result.best << '\t' << alpha << '\t'
-      << beta << '\t' << failures << '\t' << t.domain << '\t'
-      << (cache ? "operator" : "dense") << '\t'
+      << '\t' << result.beta << '\t' << result.best << '\t'
+      << (selected < count ? alpha : NAN) << '\t'
+      << (selected < count ? beta : NAN) << '\t' << failures << '\t' << t.domain
+      << '\t' << (cache ? "operator" : "dense") << '\t'
       << (partial ? "partial" : "complete") << '\t' << t.score_policy << '\t'
       << t.rule.scale << "\t1e-12\t1e-4\t" << (partial ? "partial" : "complete")
       << '\t' << count << '\t' << scored << '\t' << t.scorable << '\t'
