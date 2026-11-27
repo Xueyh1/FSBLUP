@@ -61,6 +61,7 @@ def main():
     b = h[:, 0].sum() / h[:, 1].sum()
     u = vu * k @ (h[:, 0] - b * h[:, 1])
     records = []
+    predictions = []
     for version, exe in [("old", a.old), ("new", a.new)]:
         for method in ("ai-reml", "em-reml"):
             for name, trace, opts in [
@@ -149,6 +150,21 @@ def main():
                     model = read(out / "model.tsv")[0]
                     pred = read(out / "predictions.tsv")
                     assert [r["id"] for r in pred] == ids
+                    for observed, target in zip(pred, u):
+                        predictions.append(
+                            dict(
+                                version=version,
+                                method=method,
+                                case=name,
+                                id=observed["id"],
+                                reference_u=target,
+                                reference_yhat=b + target,
+                                u=observed["u"],
+                                yhat=observed["yhat"],
+                                du=float(observed["u"]) - target,
+                                dyhat=float(observed["yhat"]) - b - target,
+                            )
+                        )
                     row.update(
                         dVu=abs(float(model["Vu"]) - vu),
                         dVe=abs(float(model["Ve"]) - ve),
@@ -166,10 +182,14 @@ def main():
                         and max(row[k] for k in ("dVu", "dVe", "max_du", "max_dyhat"))
                         < 1e-5
                     ), row
-    with (a.out / "comparison.tsv").open("w") as f:
-        w = csv.DictWriter(f, records[0], delimiter="\t", lineterminator="\n")
-        w.writeheader()
-        w.writerows(records)
+    for filename, table in [
+        ("comparison.tsv", records),
+        ("prediction-errors.tsv", predictions),
+    ]:
+        with (a.out / filename).open("w") as f:
+            w = csv.DictWriter(f, table[0], delimiter="\t", lineterminator="\n")
+            w.writeheader()
+            w.writerows(table)
 
 
 if __name__ == "__main__":

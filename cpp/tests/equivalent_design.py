@@ -1,6 +1,6 @@
 """Check identical spans, extrapolation and back-transformation of coefficients."""
 
-import csv, math, subprocess, sys, tempfile
+import csv, math, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 
@@ -135,3 +135,6 @@ with tempfile.TemporaryDirectory() as temp:
     assert p.returncode and all(
         "rank deficient" in r["reason"] for r in rows(dest / "search.tsv")
     )
+
+    if len(sys.argv) == 3:
+        shutil.copytree(root, Path(sys.argv[2]))
