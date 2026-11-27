@@ -1,0 +1,8 @@
+raw files: /tmp/fsblup-design-jjtpo284
+basis	cond_X	solver	varcomp	exit	status	Vu	Ve	contrast_loglik
+orthogonal	1.0	direct	profile-reml	0	interior	2.0000000906753357	0.99999978721243665	-7.1245401001460582
+orthogonal	1.0	pcg	ai-reml	0	interior	2.0000000000000355	0.99999999999986733	-7.1245401001460582
+orthogonal	1.0	pcg	fixed	0	fixed	1.9999999999999996	0.99999999999999978	nan
+near-collinear	19999999.993269812	direct	profile-reml	0	interior	2.0000000099802939	0.99999997657926909	-7.1245401001460564
+near-collinear	19999999.993269812	pcg	ai-reml	0	interior	2.0000000000000342	0.99999999999986566	-7.1245401001460564
+near-collinear	19999999.993269812	pcg	fixed	0	fixed	2	1	nan

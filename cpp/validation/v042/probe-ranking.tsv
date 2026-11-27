@@ -1,0 +1,17 @@
+max_probes	left	right	common_scored	max_common_weight_rank_delta	max_du	max_dyhat	max_candidate_rank_delta
+8	seed42-retry0	seed42-retry256	11	0			""
+8	seed19-retry0	seed19-retry256	11	0			""
+8	seed42-retry0	seed19-retry0	11	0			""
+8	seed42-retry256	seed19-retry256	12	0			""
+16	seed42-retry0	seed42-retry256	11	0			""
+16	seed19-retry0	seed19-retry256	11	0			""
+16	seed42-retry0	seed19-retry0	11	0			""
+16	seed42-retry256	seed19-retry256	13	0			""
+32	seed42-retry0	seed42-retry256	16	0	0.0	0.0	0
+32	seed19-retry0	seed19-retry256	21	0			""
+32	seed42-retry0	seed19-retry0	13	0			""
+32	seed42-retry256	seed19-retry256	15	0			""
+64	seed42-retry0	seed42-retry256	18	0	0.1543438924161631	0.15562694814944988	561
+64	seed19-retry0	seed19-retry256	18	0	0.42052998331191827	0.41669810472301627	994
+64	seed42-retry0	seed19-retry0	22	1	0.4369355075207686	0.4324562983639959	1132
+64	seed42-retry256	seed19-retry256	31	1	0.10988661652860499	0.11181700282976337	156

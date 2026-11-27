@@ -12,3 +12,4 @@ Model name:                              Intel(R) Xeon(R) Silver 4216 CPU @ 2.10
 Core(s) per socket:                      16
 Socket(s):                               2
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
+OpenBLAS 0.3.29 DYNAMIC_ARCH NO_AFFINITY SkylakeX MAX_THREADS=128

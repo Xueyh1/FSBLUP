@@ -1,5 +1,41 @@
 # 数值与发布验收记录
 
+## 0.4.2 数值与工程验收
+
+开发分支起点与开工时远程 cpp 均为 `80a56ba6ad025d6dbdcd638b6efc6acae63b3851`。在更改源码前，用该提交的 Release 二进制执行审查包的全部五个脚本与原有 16 项 CTest。脚本成功运行时也会报告所调用 fsblup 的非零退出码。仓库对照表用引号标识末列空字段，交付的原始记录压缩包保留脚本输出字节。[环境与指纹](validation/v042/before/environment.txt) · [原始重放输出](validation/v042/before) · [修复后重放](validation/v042/after)
+
+| 审查项 | 0.4.1 实测与根因 | 0.4.2 实测 |
+|---|---|---|
+| 8 个体随机 AI/EM | 零边界的单侧 score 合法，当前迭代似然也较低，导致直接接受 Vu=0、ℓ=−9.956007607 和所有 u=0 | 两种估计器从默认起点均到达 Vu≈1.01107841、Ve≈0.82705631、ℓ=−9.19651386833。不同探针种子、32 探针及指定内部起点都与独立误差对比 profile 和对角 GLS 一致 |
+| 精确 AI/EM 极小遗传方差起点 | 精化后只保留多峰重启条件，单峰例耗尽迭代 | 当有 KKT 边界、当前起点不优于该边界且单一精化峰更高时，使用这个峰重新开始。两种方法均达到同一内部解 |
+| 满秩设计换基 | [1,x,x+10⁻⁷z] 的条件数约为 2×10⁷，原归一化列直接进入 GLS 法方程，导致 PCG 错报病态 | 训练矩阵先中心化及尺度平衡，再作经济型 QR。对小三角因子的奇异值使用 `n_train × ε × σ_max` 判秩，验证及候选行解相同三角系统，原单位系数经逆变换还原。direct、PCG、固定 λ 和 AI 的训练及候选预测通过等价性断言 |
+| RMSE 单位 | 同乘 0.001 后，绝对停止阈值使访问数 27→19，权重变为 (.375,.125) | 对 1、0.001、1000，均访问 27 点并选 (.4375,.1875)。另一个原始缓存交叉验证了 dense/operator、PCG/direct 与两种并行策略的全部 24 种配置 |
+| 流式候选工作区 | 并发估算为每层预留固定 2048 行，40 个体、4096 SNP 在 32 MiB 下甚至不能启动一个工作者 | 同一输入、折表和预算下，blas/1、weights/1、weights/2 均完成搜索并得到相同的预测及选择 |
+| B 模式稀疏预测 | 每次训练或交叉乘法嵌入全群并扫描全部基因型行 | 将校准后 G 表为原始 G、组学子集的对角扰动和一次校准的低秩修正，复用索引化训练与交叉算子；实测见性能报告 |
+
+边界搜索在核对角均值附近取 17 个对数等距方差比。沿每条射线解析优化总尺度，使用同一组 SLQ 规则和经真实残差检查的系统求解计算限制似然差。比较计入配对标准误的 3.5 倍及深浅求积差；无法分辨时增加共同探针，达到上限后留下精度失败轨迹。有限网格与蒙特卡洛误差估计均有分辨率限制。随机残差面仍报告 `approx-residual-floor`。小规模疑似标量恒等核逐列经算子确认，精确路径仍使用正交误差谱。8 个体默认 AI/EM 均为 17 个挑战点额外执行了 85 次算子应用；总应用数分别为 748/3175。36 项非对角随机重复试验包括两种方法、两种规模和三个探针种子。[独立参照与逐 ID 误差](validation/v042/face.tsv) · [随机误差校准](validation/v042/stochastic.tsv)
+
+在 cpp 目录执行，输出路径需为新目录。重放脚本使用 Python、NumPy 和 SciPy。程序运行期间独立于 Python 与 R。
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DARMADILLO_INCLUDE_DIR="$PWD/.deps/include"
+srun -n1 -c8 --mem=12G cmake --build build -j8
+srun -n1 -c4 --mem=5G ctest --test-dir build --output-on-failure
+export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
+srun -n1 -c4 --mem=5G bash validation/v042/replay.sh "$OLD_FSBLUP" before
+srun -n1 -c4 --mem=5G bash validation/v042/replay.sh build/fsblup after
+python3 tools/v042_numeric.py "$OLD_FSBLUP" build/fsblup numerical-replay
+srun -n1 -c4 --mem=4G build/repeat_test 1000
+```
+
+### 0.4.2 调试、资源与发布
+
+22 项 CTest 在 Release、Clang ASan+UBSan 且开启 LSan、独立 TSan、Valgrind Memcheck 下分别通过。阳性对照发现 79 B 泄漏和真实数据竞争，阴性对照以零退出。另在同一进程预热后执行 1000 轮，覆盖构核、PCG、AI/EM、随机内部峰重启、并行缓存 CV、带重试的真实 CLI 搜索失败和输出异常。起末均为 4 个 FD、1 个线程，RSS 从 16564 至 16720 KiB，末 200 轮各采样点的活跃分配均为 393968 B。Memcheck 独立运行寿命程序时直接、间接及可能丢失均为 0 B，退出时可达 165818 B。TSan 覆盖项目代码，系统 OpenBLAS 使用发行版二进制。[Release](validation/v042/release.log) · [ASan/UBSan/LSan](validation/v042/asan.log) · [TSan](validation/v042/tsan.log) · [Memcheck](validation/v042/memcheck.log) · [对照](validation/v042/controls.tsv) · [寿命采样](validation/v042/lifetime.tsv) · [退出分配](validation/v042/mem-lifetime.log)
+
+独立 Memcheck 运行暴露了极端 RMS 对长双精度指数范围的依赖。最终算法逐项分离二进制指数，即使在检测器的浮点仿真下，10⁻²⁰⁰ 与 10²⁰⁰ 两端也通过尺度断言。流式规划测试读取完整 stderr 时为 Memcheck 的可达分配报告放宽了 Python CSV 的单字段长度上限；检测器错误仍由独立退出码与 sentinel 检查。新测试还用相同 f64 特征分别构造 v1/v2/v3 清单，通过公开 fit 验证预测逐字节相同。
+
+Linux x86_64 发布程序在无 R 的 UBI 9 Minimal、glibc 2.34 根文件系统中运行了实际 nearPD、嵌套搜索、缓存估参及官方 C 模式 age 示例。与锁定的 Matrix 1.7-0、rrBLUP 4.6.3 独立参照比较，1407 阶修正 K 的最大绝对差为 5.98×10⁻¹⁴，相对 Frobenius 差为 5.24×10⁻¹⁴，178 训练及 20 留出个体在同 λ 下与独立 GLS 的最大差小于 10⁻¹⁰。[隔离运行](validation/v042/clean-smoke.log) · [逐项数值结果](validation/v042/official.json)
+
 ## 0.4.1 数值回归
 
 2026-11-27 开工时本地与远程 cpp 均为 `f21497f82830e01a465fa6b539b89f825a63284a`，工作树干净。旧版 14 项 CTest 全部通过。工作区没有 `FSBLUP_0.4.0_cpp_audit_and_replay.zip`，解析例按规划给定谱重建，其余使用仓库原始数据或种子固定的模拟数据。[旧版基线](validation/v041/baseline.log)

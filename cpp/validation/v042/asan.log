@@ -1,0 +1,52 @@
+srun: job 31660 queued and waiting for resources
+srun: job 31660 has been allocated resources
+Internal ctest changing into directory: /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/build-pcg-san
+Test project /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/build-pcg-san
+      Start 21: stream_plan
+      Start 14: probe_replay
+ 1/22 Test #14: probe_replay .....................   Passed    4.70 sec
+      Start 13: pcg_cli
+ 2/22 Test #13: pcg_cli ..........................   Passed    1.67 sec
+      Start  2: numerical_cli
+ 3/22 Test #21: stream_plan ......................   Passed    7.36 sec
+      Start 17: stochastic_faces
+ 4/22 Test  #2: numerical_cli ....................   Passed    1.33 sec
+      Start 15: reml_invariance
+ 5/22 Test #17: stochastic_faces .................   Passed    0.57 sec
+      Start 10: concurrent_replay
+ 6/22 Test #15: reml_invariance ..................   Passed    0.60 sec
+      Start 16: omics_scaling
+ 7/22 Test #16: omics_scaling ....................   Passed    0.60 sec
+      Start 18: equivalent_design
+ 8/22 Test #10: concurrent_replay ................   Passed    1.05 sec
+      Start 20: retry_budget
+ 9/22 Test #18: equivalent_design ................   Passed    0.33 sec
+      Start 11: repeated_lifetime
+10/22 Test #20: retry_budget .....................   Passed    0.36 sec
+      Start  5: nearpd_cli
+11/22 Test  #5: nearpd_cli .......................   Passed    0.49 sec
+      Start 19: score_units
+12/22 Test #19: score_units ......................   Passed    0.25 sec
+      Start 22: cache_versions
+13/22 Test #22: cache_versions ...................   Passed    0.21 sec
+      Start  8: solver_range
+14/22 Test  #8: solver_range .....................   Passed    0.29 sec
+      Start  7: output_failure
+15/22 Test  #7: output_failure ...................   Passed    0.24 sec
+      Start  6: nearpd_nested
+16/22 Test  #6: nearpd_nested ....................   Passed    0.24 sec
+      Start  3: solver_shift
+17/22 Test  #3: solver_shift .....................   Passed    0.13 sec
+      Start 12: pcg_reml_math
+18/22 Test #12: pcg_reml_math ....................   Passed    0.07 sec
+      Start  1: core
+19/22 Test #11: repeated_lifetime ................   Passed    2.04 sec
+      Start  4: nearpd_core
+20/22 Test  #4: nearpd_core ......................   Passed    0.03 sec
+      Start  9: io_limits
+21/22 Test  #1: core .............................   Passed    0.07 sec
+22/22 Test  #9: io_limits ........................   Passed    0.03 sec
+
+100% tests passed, 0 tests failed out of 22
+
+Total Test time (real) =  11.34 sec

@@ -142,7 +142,21 @@ def main():
             folder = d / f"panel-{ceiling}"
             f = folder / (filename + ".tsv")
             if f.is_file():
-                rs.extend(dict(max_probes=ceiling, **r) for r in read(f))
+                for row in read(f):
+                    if filename == "comparisons":
+                        ranked = [
+                            [
+                                (r["alpha"], r["beta"])
+                                for r in candidate_ranks(folder / row[side])
+                            ]
+                            for side in ("left", "right")
+                        ]
+                        common = set(ranked[0]) & set(ranked[1])
+                        l, r = [[k for k in side if k in common] for side in ranked]
+                        row["max_common_weight_rank_delta"] = max(
+                            (abs(i - r.index(k)) for i, k in enumerate(l)), default=None
+                        )
+                    rs.append(dict(max_probes=ceiling, **row))
         if rs:
             write(out / (table + ".tsv"), rs)
     ranking = []

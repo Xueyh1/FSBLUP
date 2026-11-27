@@ -1,6 +1,7 @@
 """Use identical baseline caches to isolate byte counts and estimator-unit changes."""
 
-import argparse, csv, os, subprocess, time, itertools
+import argparse, csv, subprocess, time, itertools
+import numpy as np
 from pathlib import Path
 
 
@@ -30,12 +31,7 @@ def compare(pred, ref):
     )
 
 
-def main():
-    p = argparse.ArgumentParser(description=__doc__)
-    for k in ("old", "new", "before", "out"):
-        p.add_argument(k, type=Path)
-    a = p.parse_args()
-    a.out.mkdir()
+def measure_operations(a):
     metrics = []
     for n in [256, 4096]:
         for mode in ["A", "B"]:
@@ -131,8 +127,48 @@ def main():
                     < 1e-8
                 )
     save(a.out / "operations.tsv", metrics)
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    for k in ("old", "new", "before", "out"):
+        p.add_argument(k, type=Path)
+    p.add_argument("--units-only", action="store_true")
+    a = p.parse_args()
+    a.out.mkdir()
+    if not a.units_only:
+        measure_operations(a)
     # All combinations share a cache, an external fold table and a separate scoring column.
     d = a.before / "reproduce_operators" / "stream"
+    # Make an informative independent score column by direct out-of-fold
+    # GLS on a known interior weight. Normalize raw features over all IDs,
+    # matching the population used in prepare.
+    snp = np.loadtxt(d / "snp", skiprows=1, usecols=range(1, 4097))
+    omics = np.loadtxt(d / "omics", skiprows=1, usecols=(1, 2))
+    freq = snp.mean(axis=0) / 2
+    w = snp - 2 * freq
+    z = (omics - omics.mean(axis=0)) / omics.std(axis=0, ddof=1)
+    records = read(d / "pheno")
+    ref = np.array([i for i, r in enumerate(records) if r["trait"] != "NA"])
+    y = np.array([float(records[i]["trait"]) for i in ref])
+    k = (
+        (1 - 0.4375 - 0.1875 + 1e-6) * np.eye(len(ref))
+        + 0.1875 * (w[ref] @ w[ref].T) / np.sum(2 * freq * (1 - freq))
+        + 0.4375 * z[ref] @ z[ref].T / z.shape[1]
+    )
+    labels = {r["id"]: r["fold"] for r in read(d / "folds")}
+    groups = np.array([labels[records[i]["ID"]] for i in ref])
+    targets = {}
+    for fold in set(groups):
+        tr, va = np.flatnonzero(groups != fold), np.flatnonzero(groups == fold)
+        h = np.linalg.solve(
+            k[np.ix_(tr, tr)] + np.eye(len(tr)),
+            np.stack((y[tr], np.ones(len(tr))), axis=1),
+        )
+        estimate = k[np.ix_(va, tr)] @ (
+            h[:, 0] - h[:, 1] * h[:, 0].sum() / h[:, 1].sum()
+        )
+        targets.update(zip(ref[va], estimate))
     cases = []
     for backend, solver, parallel in itertools.product(
         ("dense", "operator"), ("pcg", "direct"), ("blas", "weights")
@@ -145,7 +181,7 @@ def main():
             for i, r in enumerate(rec):
                 if r["trait"] != "NA":
                     y = float(r["trait"])
-                    r["target"] = scale * (y + 0.05 * i)
+                    r["target"] = scale * targets[i]
                     r["trait"] = scale * y
                 else:
                     r["target"] = "NA"

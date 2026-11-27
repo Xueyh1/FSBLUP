@@ -1,0 +1,25 @@
+backend	solver	parallel	scale	points	point	max_unit_error	stop
+dense	pcg	blas	1	19	0.5,0.25	0.0	improvement < 1e-4
+dense	pcg	blas	0.001	19	0.5,0.25	7.984203576061333e-13	improvement < 1e-4
+dense	pcg	blas	1000	19	0.5,0.25	1.4580350815585064e-12	improvement < 1e-4
+dense	pcg	weights	1	19	0.5,0.25	0.0	improvement < 1e-4
+dense	pcg	weights	0.001	19	0.5,0.25	7.984203576061333e-13	improvement < 1e-4
+dense	pcg	weights	1000	19	0.5,0.25	1.4580350815585064e-12	improvement < 1e-4
+dense	direct	blas	1	19	0.5,0.25	0.0	improvement < 1e-4
+dense	direct	blas	0.001	19	0.5,0.25	3.400058012914542e-16	improvement < 1e-4
+dense	direct	blas	1000	19	0.5,0.25	2.1510571102112408e-16	improvement < 1e-4
+dense	direct	weights	1	19	0.5,0.25	0.0	improvement < 1e-4
+dense	direct	weights	0.001	19	0.5,0.25	3.400058012914542e-16	improvement < 1e-4
+dense	direct	weights	1000	19	0.5,0.25	2.1510571102112408e-16	improvement < 1e-4
+operator	pcg	blas	1	19	0.5,0.25	0.0	improvement < 1e-4
+operator	pcg	blas	0.001	19	0.5,0.25	4.822496568746004e-13	improvement < 1e-4
+operator	pcg	blas	1000	19	0.5,0.25	1.3156212230747144e-12	improvement < 1e-4
+operator	pcg	weights	1	19	0.5,0.25	0.0	improvement < 1e-4
+operator	pcg	weights	0.001	19	0.5,0.25	4.822496568746004e-13	improvement < 1e-4
+operator	pcg	weights	1000	19	0.5,0.25	1.3156212230747144e-12	improvement < 1e-4
+operator	direct	blas	1	19	0.5,0.25	0.0	improvement < 1e-4
+operator	direct	blas	0.001	19	0.5,0.25	1.942890293094024e-16	improvement < 1e-4
+operator	direct	blas	1000	19	0.5,0.25	1.3183898417423734e-16	improvement < 1e-4
+operator	direct	weights	1	19	0.5,0.25	0.0	improvement < 1e-4
+operator	direct	weights	0.001	19	0.5,0.25	1.942890293094024e-16	improvement < 1e-4
+operator	direct	weights	1000	19	0.5,0.25	1.3183898417423734e-16	improvement < 1e-4

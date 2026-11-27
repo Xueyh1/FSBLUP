@@ -1,0 +1,52 @@
+srun: job 31653 queued and waiting for resources
+srun: job 31653 has been allocated resources
+Internal ctest changing into directory: /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/runs/v042/shipped-mem-suite
+Test project /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/runs/v042/shipped-mem-suite
+      Start  1: core
+      Start  2: numerical_cli
+ 1/22 Test  #1: core .............................   Passed    4.36 sec
+      Start  3: solver_shift
+ 2/22 Test  #3: solver_shift .....................   Passed    7.01 sec
+      Start  4: nearpd_core
+ 3/22 Test  #4: nearpd_core ......................   Passed    2.35 sec
+      Start  5: nearpd_cli
+ 4/22 Test  #5: nearpd_cli .......................   Passed   42.20 sec
+      Start  6: nearpd_nested
+ 5/22 Test  #6: nearpd_nested ....................   Passed    5.56 sec
+      Start  7: output_failure
+ 6/22 Test  #7: output_failure ...................   Passed   13.96 sec
+      Start  8: solver_range
+ 7/22 Test  #8: solver_range .....................   Passed   20.23 sec
+      Start  9: io_limits
+ 8/22 Test  #9: io_limits ........................   Passed    2.23 sec
+      Start 10: concurrent_replay
+ 9/22 Test  #2: numerical_cli ....................   Passed   98.18 sec
+      Start 11: repeated_lifetime
+10/22 Test #11: repeated_lifetime ................   Passed   32.01 sec
+      Start 12: pcg_reml_math
+11/22 Test #12: pcg_reml_math ....................   Passed    3.64 sec
+      Start 13: pcg_cli
+12/22 Test #10: concurrent_replay ................   Passed   50.74 sec
+      Start 14: probe_replay
+13/22 Test #14: probe_replay .....................   Passed   77.16 sec
+      Start 15: reml_invariance
+14/22 Test #13: pcg_cli ..........................   Passed  125.06 sec
+      Start 16: omics_scaling
+15/22 Test #15: reml_invariance ..................   Passed   49.85 sec
+      Start 17: stochastic_faces
+16/22 Test #16: omics_scaling ....................   Passed   37.77 sec
+      Start 18: equivalent_design
+17/22 Test #17: stochastic_faces .................   Passed   47.04 sec
+      Start 19: score_units
+18/22 Test #18: equivalent_design ................   Passed   29.51 sec
+      Start 20: retry_budget
+19/22 Test #19: score_units ......................   Passed   11.15 sec
+      Start 21: stream_plan
+20/22 Test #20: retry_budget .....................   Passed   10.45 sec
+      Start 22: cache_versions
+21/22 Test #22: cache_versions ...................   Passed   15.53 sec
+22/22 Test #21: stream_plan ......................   Passed   68.19 sec
+
+100% tests passed, 0 tests failed out of 22
+
+Total Test time (real) = 402.05 sec

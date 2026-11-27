@@ -1,0 +1,9 @@
+pedigree	n	exit	wall_s	error
+shallow	500	0	0.01614	""
+ancestral	500	0	0.03242	""
+shallow	1000	0	0.02005	""
+ancestral	1000	0	0.08713	""
+shallow	2000	0	0.02848	""
+ancestral	2000	0	0.3055	""
+shallow	4000	0	0.04509	""
+ancestral	4000	0	1.1753	""

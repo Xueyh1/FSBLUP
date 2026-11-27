@@ -13,6 +13,6 @@ for case in reproduce_reml reproduce_design replay_cv_units reproduce_operators 
  *) args+=("$out/$case");;
  esac
  status=0
- python3 "$scripts/$case.py" "${args[@]}" >"$out/$case.log" 2>&1 || status=$?
+ TMPDIR="$out" python3 "$scripts/$case.py" "${args[@]}" >"$out/$case.log" 2>&1 || status=$?
  echo "$case $status" >> "$out/exits.txt"
 done
