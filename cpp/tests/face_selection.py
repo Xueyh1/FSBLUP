@@ -40,3 +40,26 @@ with tempfile.TemporaryDirectory() as d:
                 assert abs(float(r["yhat"])-b-u)<1e-5
             if i==1:
                 assert any(r["status"]=="interior-restart" for r in rows(out/"reml_trace.tsv"))
+
+with tempfile.TemporaryDirectory() as d:
+    d=Path(d)
+    for case in ("genetic-zero","residual-floor","unidentifiable"):
+        k=data/"K.tsv"
+        if case=="unidentifiable":
+            k=d/"identity.tsv"
+            with k.open("w") as f:
+                print("id",*range(1,9),sep="\t",file=f)
+                for i in range(8):print(i+1,*[(1-1e-6) if i==j else 0 for j in range(8)],sep="\t",file=f)
+        with (d/"y").open("w") as f:
+            print("id","y",sep="\t",file=f)
+            for i,z in enumerate(([1,-1,0,0,0,0,0,0] if case=="genetic-zero" else [0,0,0,0,0,0,1,-1])):
+                print(i+1,z,sep="\t",file=f)
+        for method in ("ai-reml","em-reml"):
+            out=d/(method+case)
+            args=[exe,"fit",*[v for key in "AGO" for v in ("--"+key,k)],
+                  "--pheno",d/"y","--id","id","--trait","y","--alpha","0","--beta","0",
+                  "--varcomp",method,"--trace","hutchinson","--out",out]
+            if case=="residual-floor":args+=["--init-vu","1","--init-ve","1e-12"]
+            p=subprocess.run(args,capture_output=True,text=True)
+            assert not p.returncode,p.stderr
+            assert case in rows(out/"model.tsv")[0]["status"]

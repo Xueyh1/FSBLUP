@@ -440,7 +440,7 @@ FaceCheck compare_face(ProbeSet &p, const mat &x, const vec &y,
     double ratio = std::exp2(j * 1.5) * km;
     double g = scale / (km + ratio), e = ratio * g;
     auto before = p.audit.matvec;
-    auto state = evaluate(p, x, y, g, e, count, false);
+    auto state = evaluate(p, x, y, g, e, count, false, true);
     double factor = state.ypy / df;
     require(factor > 0 && std::isfinite(factor),
             "invalid profiled stochastic scale");
@@ -463,7 +463,7 @@ FaceCheck compare_face(ProbeSet &p, const mat &x, const vec &y,
       best.e = e;
       best.gain = gain;
     }
-    if (gain + error >= 0)
+    if (gain + error >= 0 || state.depth > p.o.slq_tol)
       best.unresolved = true;
   }
   return best;
@@ -492,6 +492,35 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
   double zero_score = .5 * (arma::dot(residual, ky) / (scale * scale) -
                             (probes.traceK - arma::accu(qx % kq)) / scale);
   double zero_lik = -.5 * df * (std::log(scale) + 1);
+  // Confirm a scalar kernel columnwise for small ambiguous models.
+  // A finite set of random directions alone cannot certify identifiability.
+  double flat_tol = 1e-12 * std::max(1., km);
+  if (arma::abs(k.diagonal - km).max() <= flat_tol &&
+      arma::norm(ky - km * residual) <= flat_tol * arma::norm(residual)) {
+    if (x.n_rows <= 64) {
+      bool scalar = true;
+      for (size_t j = 0; j < x.n_rows && scalar; ++j) {
+        vec unit(x.n_rows, arma::fill::zeros);
+        unit[j] = 1;
+        scalar = arma::norm(k.apply(unit) - km * unit) <=
+                 flat_tol / std::sqrt(double(x.n_rows));
+        ++a.matvec;
+      }
+      if (scalar) {
+        double part = scale / (km + 1);
+        a.steps.push_back(
+            {0, 0, part, part, zero_lik, 0, 0, 0, 0, "unidentifiable"});
+        return {part, part, zero_lik, "unidentifiable;lambda=1"};
+      }
+    } else {
+      probes.ensure(count);
+      bool flat = true;
+      for (const auto &rule : probes.rules)
+        flat &= arma::abs(rule.second.nodes - km).max() <= flat_tol;
+      require(!flat, "stochastic precision insufficient: kernel "
+                     "indistinguishable from scalar identity");
+    }
+  }
   bool restarted = false;
   int it = 0;
   while (it <= o.max_reml) {
@@ -520,7 +549,10 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
         restarted = true;
         continue;
       }
-      if (best.unresolved) {
+      if (best.unresolved ||
+          lik + 3.5 * arma::stddev(cur.lik) / std::sqrt(double(count)) +
+                  cur.depth * x.n_rows >
+              zero_lik) {
         require(count < o.max_probes,
                 "stochastic precision insufficient: probe budget exhausted "
                 "comparing boundary");

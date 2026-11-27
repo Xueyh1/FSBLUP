@@ -46,6 +46,17 @@ void exercise(const Layers &layers, const fs::path &path,
   exact.max_reml = 8000;
   auto em = fit_model(testk, design, testy, train, exact, derived);
   require(em.u.is_finite(), "repeated EM fit");
+  vec diagonal = {.002, .01, .1, 1, 5, 10, 20, 100};
+  vec response = {.0778695253, 1.118391287, 2.157258318, .692639708,
+                  .998079965,  -6.03329651, .521829145,  .46722856};
+  FitOptions stochastic;
+  stochastic.trace = "hutchinson";
+  stochastic.probe_lanczos = true;
+  auto all = arma::regspace<uvec>(0, 7);
+  auto internal = fit_model(arma::diagmat(diagonal), design, response, all,
+                            stochastic, derived);
+  require(internal.status == "approx-interior" && internal.vu > 1,
+          "repeated stochastic face selection");
   Cache cache(cache_dir, 256);
   Ids cache_ids(cache.ped.ids.begin(), cache.ped.ids.begin() + 8);
   auto cache_folds =
