@@ -433,7 +433,8 @@ struct FaceCheck {
 };
 FaceCheck compare_face(ProbeSet &p, const mat &x, const vec &y,
                        const vec &face_lik, double scale, double km,
-                       size_t count, int it, double design_logdet) {
+                       size_t count, int it, double design_logdet,
+                       double face_depth = 0) {
   FaceCheck best;
   double df = x.n_rows - x.n_cols;
   for (int j = -8; j <= 8; ++j) {
@@ -451,7 +452,7 @@ FaceCheck compare_face(ProbeSet &p, const mat &x, const vec &y,
     vec diff = lik - face_lik;
     double gain = arma::mean(diff),
            se = arma::stddev(diff) / std::sqrt(double(count));
-    double error = 3.5 * se + state.depth * x.n_rows +
+    double error = 3.5 * se + (state.depth + face_depth) * x.n_rows +
                    64 * arma::datum::eps * (1 + std::abs(arma::mean(lik)));
     auto &step = p.audit.steps.emplace_back(
         Iteration{it, 0, g, e, arma::mean(lik), NAN, NAN, 0, 0,
@@ -658,8 +659,9 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
                 "increase --slq-depth");
       }
       if (boundary_g || boundary_e) {
-        auto best = compare_face(probes, x, y, cur.lik + .5 * design_logdet,
-                                 scale, km, count, it, design_logdet);
+        auto best =
+            compare_face(probes, x, y, cur.lik + .5 * design_logdet, scale, km,
+                         count, it, design_logdet, cur.depth);
         if (std::isfinite(best.gain) && !restarted) {
           g = best.g;
           e = best.e;
