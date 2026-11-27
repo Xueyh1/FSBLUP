@@ -1,0 +1,7 @@
+pedigree	cohort	genotyped	omics	cap_MiB	exit	pedigree_active	reported_active	result
+unrelated	512	48	16	16	0	48	48	fixed
+unrelated	512	48	16	96	0	48	48	fixed
+connected	512	48	16	16	1	512		fsblup: mode C measured connected components needs 48.437500 MiB; raise --memory-mb or reduce the conditioning group
+connected	512	48	16	96	0	512	512	fixed
+one_disconnected	512	48	16	16	1	511		fsblup: mode C measured connected components needs 48.250183 MiB; raise --memory-mb or reduce the conditioning group
+one_disconnected	512	48	16	96	0	511	511	fixed

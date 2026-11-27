@@ -1,5 +1,30 @@
 # 数值与发布验收记录
 
+## 0.4.3 审查重放
+
+开发起点为远端 cpp 与本地共同的 `50169d0b0bfb971debfad0c4cba9df267075528e`，原工作树干净，独立分支 `dev/0.4.3`。修改前运行全部 22 项 Release CTest、解压并执行本次审查的六个公开 CLI 脚本。脚本完成与各个 fit 成功是不同的记录，原始目录中保留失败轨迹。[基线测试](validation/v043/before/baseline-ctest.log) · [程序、附件和输入指纹](validation/v043/fingerprints.txt)
+
+**内部峰。** 0.4.2 会在较低的内部驻点停止，两个局部 score 和 logdet SE 均不足以说明已比较其他方差比。0.4.3 在通过原局部收敛判据后，对共用探针的剖面候选计算配对增益，比较 3.5 个标准误、深浅求积差和浮点误差。使用 Lanczos 的优势候选另经真实残差检查的 PCG 再比较。每次最多 17 个网格比值，局部内部重启最多两次；竞争者无法区分时增加探针，达到上限后留下精度诊断。训练不超过 128 行且误差对比维数不超过 32 并小于固定效应数时，可用小的对比压缩核低成本筛查其他似然盆地；所需空间计入求解预算。公开文件中的 `interior-challenger`、`higher-interior-restart` 和 `compared-interiors` 分别标记比较、重启和有限筛查完成。有限网格可能漏掉窄峰。
+
+8 个训练和 2 个候选的反例，默认 AI 和 EM 在旧版均给 ℓ=−13.26684620、C1>C2。独立 SciPy 正交对比 profile 的较高峰为 ℓ=−12.41283843291，Vu≈0.02430509、Ve≈10.59433057，C1≈0.0014331594、C2≈0.067579024。新版从冷、热起点与不同探针种子核对全部 ID 的 u/yhat。[内部峰重放](validation/v043/after/replay_interior_modes.tsv)
+
+**可识别性。** 先由 `tr(K)−tr(Q′KQ)` 与残差自由度取得候选标量，再检查投影后作用与标量恒等算子之间的偏差。小训练集逐列确认；较大核用投影方向筛查，证据不足时返回精度诊断。数值舍入内的标量采用非唯一的 λ=1 约定，接近标量但超过舍入级时给出近不可识别诊断。8 个全同胞样本的随机 EM 从耗尽 20000 次更新变为 0 次更新，报告可识别的组合而非两个独立信息来源。[全同胞结果](validation/v043/after/replay_identifiability.tsv)
+
+**验证标签。** 默认 RMSE 尺度是各可评分折验证真值均方的等权平均的平方根。同一 ID 再次出现在验证折时按本折计入；从未参与评分的行不计入。全零则用同批验证行的性状 RMS，仍为零时取 1。全部 AUC 验证折单类时，搜索在构造候选前终止，输出 `no scorable fold`、0 次折拟合与 0 个非法核。精度预算异常在数值层抛出，评估和重试层按异常类型处理。训练专属辅助标签由 0 变为 400 的反例中，原先 31 点变 19 点；新版两次得到相同尺度、序列、停止原因和权重。[时间切分](validation/v043/after/replay_temporal_scale.tsv)
+
+8+2 反例的 16 组起点、种子与求解后端补充运行均独立核对所有个体。连同原重放中的直接/精确对照，新版逐 ID 最大 |Δu| 小于 1.31×10⁻⁷，|Δyhat| 小于 1.17×10⁻⁷，|Δℓ| 小于 5.4×10⁻¹⁵。固定效应扩展反例、全同胞相邻可识别例、零边界与旧双峰分别回归。历史冻结的 R 嵌套搜索按 legacy 几何核对；新默认搜索另与独立枚举比较。[逐 ID 误差和比较成本](validation/v043/comparison-per-id.tsv) · [随机/时间/世代及两后端的尺度](validation/v043/validation-summary.tsv)
+
+从 cpp 目录使用新输出目录执行下列命令。重放依赖 Python、NumPy 和 SciPy，发布程序本身独立于 Python 和 R。
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DARMADILLO_INCLUDE_DIR="$PWD/.deps/include"
+srun -n1 -c2 --mem=3G cmake --build build -j2
+srun -n1 -c2 --mem=2G ctest --test-dir build --output-on-failure
+srun -n1 -c2 --mem=1G bash validation/v043/replay.sh "$OLD_FSBLUP" before
+srun -n1 -c2 --mem=1G bash validation/v043/replay.sh "$RELEASE_FSBLUP" after
+sbatch -n1 -c2 --mem=3G validation/v043/batch.sh new-audit "$(git rev-parse HEAD)"
+```
+
 ## 0.4.2 数值与工程验收
 
 开发分支起点与开工时远程 cpp 均为 `80a56ba6ad025d6dbdcd638b6efc6acae63b3851`。在更改源码前，用该提交的 Release 二进制执行审查包的全部五个脚本与原有 16 项 CTest。脚本成功运行时也会报告所调用 fsblup 的非零退出码。仓库对照表用引号标识末列空字段，交付的原始记录压缩包保留脚本输出字节。[环境与指纹](validation/v042/before/environment.txt) · [原始重放输出](validation/v042/before) · [修复后重放](validation/v042/after)

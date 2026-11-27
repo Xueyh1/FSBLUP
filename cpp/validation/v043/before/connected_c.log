@@ -5,4 +5,3 @@ connected	512	48	16	16	1	512		fsblup: mode C measured connected components needs
 connected	512	48	16	96	0	512	512	fixed
 one_disconnected	512	48	16	16	1	511		fsblup: mode C measured connected components needs 48.250183 MiB; raise --memory-mb or reduce the conditioning group
 one_disconnected	512	48	16	96	0	511	0	fixed
-

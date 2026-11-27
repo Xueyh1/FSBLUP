@@ -1,0 +1,5 @@
+target	solver	target_alpha	target_beta	selected_alpha	selected_beta	cli_rmse	independent_selected_rmse	visited	target_visited	target_oracle_rmse	target_fixed_cli_cv_rmse
+edge	direct	0.125	0.0	0.125	0	1.3309942726633389e-17	0.0	30	1	0.0	1.3309942726633389e-17
+edge	pcg	0.125	0.0	0.125	0	2.868609828613861e-14	0.0	30	1	0.0	2.868609828613861e-14
+interior	direct	0.375	0.25	0.375	0.25	3.9591326312642564e-17	0.0	39	1	0.0	3.959132631264257e-17
+interior	pcg	0.375	0.25	0.375	0.25	2.4397847136766885e-13	0.0	39	1	0.0	2.4397847136766885e-13

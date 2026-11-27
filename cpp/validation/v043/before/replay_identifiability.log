@@ -1,5 +1,5 @@
 method	trace	exit	status	updates	Vu	Ve
 ai-reml	exact	0	unidentifiable;lambda=1	0	0.28644693913719788	0.28644693913719788
-ai-reml	hutchinson	1	fsblup: final fit failed: stochastic AI unidentifiable or ill-conditioned, rank=1	0		
+ai-reml	hutchinson	1	fsblup: final fit failed: stochastic AI unidentifiable or ill-conditioned, rank=1	0		""
 em-reml	exact	0	unidentifiable;lambda=1	0	0.28644693913719788	0.28644693913719788
-em-reml	hutchinson	1	fsblup: final fit failed: stochastic REML iteration-limit	20000		
+em-reml	hutchinson	1	fsblup: final fit failed: stochastic REML iteration-limit	20000		""

@@ -1,0 +1,5 @@
+method	trace	exit	status	updates	Vu	Ve
+ai-reml	exact	0	unidentifiable;lambda=1	0	0.28644693913719788	0.28644693913719788
+ai-reml	hutchinson	0	unidentifiable;lambda=1	0	0.28644693913719793	0.28644693913719793
+em-reml	exact	0	unidentifiable;lambda=1	0	0.28644693913719788	0.28644693913719788
+em-reml	hutchinson	0	unidentifiable;lambda=1	0	0.28644693913719793	0.28644693913719793

@@ -1,0 +1,13 @@
+split	backend	parallel	scale	visited	alpha	beta
+year	dense	weights	0.3208437944176725	30	0	0.25
+year	dense	blas	0.3208437944176725	30	0	0.25
+year	operator	weights	0.3208437944176725	30	0	0.25
+year	operator	blas	0.3208437944176725	30	0	0.25
+ngen	dense	weights	0.3208437944176725	30	0	0.25
+ngen	dense	blas	0.3208437944176725	30	0	0.25
+ngen	operator	weights	0.3208437944176725	30	0	0.25
+ngen	operator	blas	0.3208437944176725	30	0	0.25
+repeated	dense	weights	0.27142710168894885	31	0	0.03125
+repeated	dense	blas	0.27142710168894885	31	0	0.03125
+repeated	operator	weights	0.27142710168894885	31	0	0.03125
+repeated	operator	blas	0.27142710168894885	31	0	0.03125

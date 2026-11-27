@@ -1,0 +1,4 @@
+backend	cap	exit	active	reported	certificate	reason	wall	rss	max_d_prediction
+operator	16	1	990			fsblup: mode C measured connected components needs 180.274170 MiB; raise --memory-mb or reduce the conditioning group	0.01641106605529785		""
+operator	320	0	990	990	dense	complete-population nearPD required	1.7073394283652306	117476	3.219646771412954e-15
+dense	320	0	990	0	dense		1.6212808340787888	117300	""

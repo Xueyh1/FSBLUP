@@ -21,7 +21,7 @@ def read(p):
 
 def save(p, rs):
     if rs:
-        tab(p, list(rs[0]), ([r[k] for k in rs[0]] for r in rs))
+        keys=list(dict.fromkeys(k for r in rs for k in r)); tab(p,keys,([r.get(k,"NA") for k in keys] for r in rs))
 
 
 def inputs(d, n, m, h):

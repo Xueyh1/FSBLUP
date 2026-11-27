@@ -1,5 +1,4 @@
 case	fixed_columns	features	algorithm_cap_MiB	train	planned_rhs_panel	coefficient_matrix_MiB	peak_RSS_KiB	exit	model_status	reason
 early_stop	2	60000	12	80	1	0.91552734375	21772	1		fsblup: final fit failed: PCG iteration-limit rhs=X0 true_residual=0.034396
 early_stop	60	60000	12	80	1	27.4658203125	48840	1		fsblup: final fit failed: PCG iteration-limit rhs=X0 true_residual=0.034396
-default_pcg_limit	60	60000	12	80	1	27.4658203125	49356	0	approx-interior	
-
+default_pcg_limit	60	60000	12	80	1	27.4658203125	49356	0	approx-interior	""
