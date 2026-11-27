@@ -182,5 +182,6 @@ Search
 search(bool strict, ScoreRule rule,
        const std::function<Evaluation(double, double)> &evaluate,
        size_t workers = 1,
-       const std::function<void(double, double, Evaluation &)> &retry = {});
+       const std::function<void(double, double, Evaluation &)> &retry = {},
+       const string &policy = "neighborhood");
 } // namespace fsb

@@ -225,10 +225,34 @@ ScoreRule validation_rule(const string &metric, const vec &truth, const vec &y,
     return {metric == "rmse", 1};
   return scoring_rule(metric, rms_truth.head(n), rms_y.head(n), policy);
 }
+static std::vector<std::pair<double, double>>
+neighbors(double a, double b, double step, bool strict, bool axes) {
+  std::vector<std::pair<double, double>> out;
+  auto add = [&](int da, int db) {
+    double x = a + da * step, y = b + db * step;
+    if (!strict || (x >= 0 && y >= 0 && x + y <= 1))
+      out.emplace_back(x, y);
+  };
+  for (int da : {-1, 1})
+    for (int db : {-1, 1})
+      add(da, db);
+  if (axes) {
+    add(-1, 0);
+    add(1, 0);
+    add(0, -1);
+    add(0, 1);
+  }
+  return out;
+}
+static bool refinement_done(const ScoreRule &rule, double old, double best,
+                            double step, bool legacy) {
+  return rule.stopped(old, best) && (legacy || step <= 1. / 32);
+}
 Search search(bool strict, ScoreRule rule,
               const std::function<Evaluation(double, double)> &evaluate,
               size_t workers,
-              const std::function<void(double, double, Evaluation &)> &retry) {
+              const std::function<void(double, double, Evaluation &)> &retry,
+              const string &policy) {
   require(workers > 0, "invalid worker count");
   Search out;
   using Point = std::pair<double, double>;
@@ -281,20 +305,22 @@ Search search(bool strict, ScoreRule rule,
     out.stop = "no eligible grid point";
     return out;
   }
+  if (policy == "grid") {
+    out.stop = "fixed grid";
+    return out;
+  }
+  bool legacy = policy == "legacy";
+  require(legacy || policy == "neighborhood", "unknown search policy");
   double step = .125;
   out.stop = "round limit";
   for (int r = 1; r <= 10; ++r) {
     auto a = out.alpha, b = out.beta, old = out.best;
-    for (double da : {-step, step})
-      for (double db : {-step, step}) {
-        double x = a + da, y = b + db;
-        if (strict && (x < 0 || y < 0 || x + y > 1))
-          continue;
-        enqueue(x, y);
-      }
+    for (auto [x, y] : neighbors(a, b, step, strict, !legacy))
+      enqueue(x, y);
     run_batch("refine" + std::to_string(r));
-    if (rule.stopped(old, out.best)) {
-      out.stop = "improvement < 1e-4";
+    if (refinement_done(rule, old, out.best, step, legacy)) {
+      out.stop =
+          legacy ? "improvement < 1e-4" : "step <= 1/32 and improvement < 1e-4";
       break;
     }
     step /= 2;

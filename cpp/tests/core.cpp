@@ -185,6 +185,15 @@ int main(int argc, char **argv) {
     close(search_result.best, 0);
     close(search_result.alpha, .375);
     close(search_result.beta, .375);
+    for (auto point :
+         {std::pair{.125, 0.}, std::pair{.375, .25}, std::pair{.375, .625}}) {
+      auto r = search(true, true, [&](double a, double b) {
+        Evaluation e;
+        e.value = std::hypot(a - point.first, b - point.second);
+        return e;
+      });
+      close(r.best, 0.);
+    }
     auto tied = search(true, false, [](double, double) {
       Evaluation e;
       e.value = 1;
@@ -205,7 +214,8 @@ int main(int argc, char **argv) {
     auto concurrent = search(true, false, near_tie, 4);
     close(concurrent.alpha, 0);
     close(concurrent.beta, 0);
-    require(concurrent.stop == "improvement < 1e-4", "parallel stop rule");
+    require(concurrent.stop == "step <= 1/32 and improvement < 1e-4",
+            "parallel stop rule");
     rejects([] {
       search(
           true, false,

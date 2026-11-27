@@ -374,7 +374,7 @@ Labels labels_from_file(const fs::path &path, const Ids &ids, bool &temporal) {
 struct Tuning {
   Search search;
   Ids fold_columns;
-  string metric, coverage, domain, score_policy;
+  string metric, coverage, domain, score_policy, search_policy;
   ScoreRule rule;
   size_t scorable, budget;
 };
@@ -513,7 +513,7 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
   // from the numerical worker buffers; full debug events remain streamable.
   double trace_budget = std::max(1., cap * 1048576. * .04);
   fold_options.record_every = std::max(
-      double(opts.log_every), std::ceil(55. * folds.size() * opts.max_reml *
+      double(opts.log_every), std::ceil(95. * folds.size() * opts.max_reml *
                                         sizeof(Iteration) / trace_budget));
   fold_options.memory_mb = worker_cap;
   string score_policy = opt.get("score-policy", "relative");
@@ -596,6 +596,10 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
       ev = std::move(next);
     }
   };
+  auto geometry = opt.get("search-policy", "neighborhood");
+  require(geometry == "legacy" || geometry == "grid" ||
+              geometry == "neighborhood",
+          "invalid search policy");
   Search result;
   if (!scorable)
     result.stop = "no scorable fold: " + folds.front().reason;
@@ -603,7 +607,7 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
     result = search(
         opt.has("strict-simplex"), rule,
         [&](double a, double b) { return evaluate(a, b, fold_options); },
-        tm.weight_workers, retry);
+        tm.weight_workers, retry, geometry);
 
   std::vector<FitAudit> audits;
   for (auto &t : result.trials)
@@ -631,6 +635,7 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
           l.counts(),
           opt.has("strict-simplex") ? "simplex" : "historical",
           score_policy,
+          geometry,
           rule,
           scorable,
           budget};
@@ -765,7 +770,7 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
          "point\tfolds_completed\tprobe_exhausted\tnumerical_failures\tinvalid_"
          "kernel\tuncertified\tretry_budget\tretry_reserved\tfolds_scored_last_"
          "attempt\tfold_attempts\tfull_invalid\tfull_uncertified\tvalidation_"
-         "unscorable\n"
+         "unscorable\tsearch_policy\n"
       << t.metric << '\t'
       << (selected < count ? trials[selected].result.value : NAN) << '\t'
       << result.stop << '\t' << field(t.coverage) << '\t' << result.alpha
@@ -781,7 +786,8 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
       << '\t' << completed << '\t' << attempted << '\t'
       << failures - std::count(uncertified.begin(), uncertified.end(), true)
       << '\t' << std::count(uncertified.begin(), uncertified.end(), true)
-      << '\t' << t.fold_columns.size() - t.scorable << '\n';
+      << '\t' << t.fold_columns.size() - t.scorable << '\t' << t.search_policy
+      << '\n';
   });
   if (!std::isfinite(result.best))
     throw TuningFailure(count

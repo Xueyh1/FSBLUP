@@ -43,7 +43,7 @@ bwrap --unshare-all --die-with-parent --clearenv --setenv PATH /usr/bin:/bin \
     nested=source/cpp/tests/nested
     bin/fsblup fit --A "$nested/A.tsv" --G "$nested/G.tsv" --O "$nested/O.tsv" \
       --pheno "$nested/pheno.tsv" --id ID --trait trait --folds-file "$nested/folds.tsv" \
-      --metric rmse --strict-simplex --pd-policy nearPD --parallel weights --threads 4 --out /mnt/outer
+      --metric rmse --strict-simplex --search-policy legacy --pd-policy nearPD --parallel weights --threads 4 --out /mnt/outer
     awk -F "\t" '\''NR==2 && $2==0.75 && $3==0.25 {ok=1} END {exit !ok}'\'' /mnt/outer/fusion.tsv
     awk -F "\t" '\''NR==2 && $2==1 && $5==4 {ok=1} END {exit !ok}'\'' /mnt/outer/runtime.tsv
     bin/fsblup prepare --ped example/ped.tsv --snp example/snp.tsv --omics example/omics.tsv \

@@ -26,22 +26,22 @@ struct Options {
     else {
       allowed.insert({"A", "G", "O", "alpha", "beta", "pd-policy"});
       if (cmd == "fit")
-        allowed.insert({"cache",        "cache-backend",  "cache-storage",
-                        "pcg-rank",     "pheno",          "id",
-                        "trait",        "folds",          "repeats",
-                        "seed",         "folds-file",     "year",
-                        "ngen",         "metric",         "score-col",
-                        "trace-rank",   "slq-batch",      "slq-reorth",
-                        "probe-solver", "probes",         "max-probes",
-                        "retry-probes", "probe-seed",     "slq-depth",
-                        "probe-batch",  "mc-tol",         "slq-tol",
-                        "solver",       "varcomp",        "trace",
-                        "lambda",       "pcg-rtol",       "pcg-atol",
-                        "pcg-maxiter",  "preconditioner", "max-backtracks",
-                        "reml-maxiter", "reml-tol",       "init-vu",
-                        "init-ve",      "parallel",       "covar",
-                        "factor",       "strict-simplex", "score-policy",
-                        "write-k"});
+        allowed.insert({"cache",         "cache-backend",  "cache-storage",
+                        "pcg-rank",      "pheno",          "id",
+                        "trait",         "folds",          "repeats",
+                        "seed",          "folds-file",     "year",
+                        "ngen",          "metric",         "score-col",
+                        "trace-rank",    "slq-batch",      "slq-reorth",
+                        "probe-solver",  "probes",         "max-probes",
+                        "retry-probes",  "probe-seed",     "slq-depth",
+                        "probe-batch",   "mc-tol",         "slq-tol",
+                        "solver",        "varcomp",        "trace",
+                        "lambda",        "pcg-rtol",       "pcg-atol",
+                        "pcg-maxiter",   "preconditioner", "max-backtracks",
+                        "reml-maxiter",  "reml-tol",       "init-vu",
+                        "init-ve",       "parallel",       "covar",
+                        "factor",        "strict-simplex", "score-policy",
+                        "search-policy", "write-k"});
       else
         require(cmd == "fuse", "unknown subcommand: " + cmd);
     }

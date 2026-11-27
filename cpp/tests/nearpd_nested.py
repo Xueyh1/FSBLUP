@@ -39,7 +39,7 @@ if __name__=="__main__":
     data=Path(__file__).parent/"nested"
     with tempfile.TemporaryDirectory() as tmp:
         run=Path(tmp)/"fit"
-        args=[sys.argv[1],"fit","--out",run,"--pd-policy","nearPD","--strict-simplex","--write-k",
+        args=[sys.argv[1],"fit","--out",run,"--pd-policy","nearPD","--strict-simplex","--search-policy","legacy","--write-k",
               "--folds-file",data/"folds.tsv","--metric","rmse","--id","ID","--trait","trait","--pheno",data/"pheno.tsv"]
         for layer in "AGO":
             args.extend(["--"+layer,data/(layer+".tsv")])
