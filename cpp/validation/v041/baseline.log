@@ -1,0 +1,34 @@
+Internal ctest changing into directory: /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/build
+Test project /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/build
+      Start  1: core
+ 1/14 Test  #1: core .............................   Passed    0.02 sec
+      Start  2: numerical_cli
+ 2/14 Test  #2: numerical_cli ....................   Passed    0.51 sec
+      Start  3: solver_shift
+ 3/14 Test  #3: solver_shift .....................   Passed    0.07 sec
+      Start  4: nearpd_core
+ 4/14 Test  #4: nearpd_core ......................   Passed    0.01 sec
+      Start  5: nearpd_cli
+ 5/14 Test  #5: nearpd_cli .......................   Passed    0.21 sec
+      Start  6: nearpd_nested
+ 6/14 Test  #6: nearpd_nested ....................   Passed    0.09 sec
+      Start  7: output_failure
+ 7/14 Test  #7: output_failure ...................   Passed    0.11 sec
+      Start  8: solver_range
+ 8/14 Test  #8: solver_range .....................   Passed    0.12 sec
+      Start  9: io_limits
+ 9/14 Test  #9: io_limits ........................   Passed    0.01 sec
+      Start 10: concurrent_replay
+10/14 Test #10: concurrent_replay ................   Passed    0.33 sec
+      Start 11: repeated_lifetime
+11/14 Test #11: repeated_lifetime ................   Passed    0.04 sec
+      Start 12: pcg_reml_math
+12/14 Test #12: pcg_reml_math ....................   Passed    0.02 sec
+      Start 13: pcg_cli
+13/14 Test #13: pcg_cli ..........................   Passed    0.53 sec
+      Start 14: probe_replay
+14/14 Test #14: probe_replay .....................   Passed    1.20 sec
+
+100% tests passed, 0 tests failed out of 14
+
+Total Test time (real) =   3.28 sec

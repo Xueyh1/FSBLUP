@@ -1,3 +1,4 @@
+#include "design.hpp"
 #include "linear.hpp"
 namespace fsb {
 double solver_workspace(size_t n, size_t targets, size_t p,
@@ -16,17 +17,17 @@ double solver_workspace(size_t n, size_t targets, size_t p,
     work += 160. * n * n;
   return work;
 }
-Model fit_operator(const TrainKernel &input, const mat &xt, const mat &x,
-                   const vec &y, const FitOptions &o, FitAudit &audit) {
+Model fit_operator(const TrainKernel &input, const mat &training,
+                   const mat &targets, const vec &y, const FitOptions &o,
+                   FitAudit &audit) {
   string context = std::move(audit.context);
   audit = {};
   audit.context = std::move(context);
   audit.n = y.n_elem;
-  size_t n = y.n_elem, p = x.n_cols;
-  require(xt.n_rows == n && xt.n_cols == p && n > p && p && arma::rank(xt) == p,
-          "training design rank deficient or no residual degrees of freedom");
-  require(y.is_finite() && xt.is_finite() && x.is_finite(),
-          "nonfinite training phenotype or design");
+  size_t n = y.n_elem, p = targets.n_cols;
+  require(training.n_rows == n && y.is_finite(), "invalid training response");
+  BalancedDesign design(training, targets);
+  const auto &xt = design.train, &x = design.target;
   double work = solver_workspace(n, x.n_rows, p, o);
   if (work / 1048576. >= o.memory_mb)
     throw std::runtime_error("training solver needs " +
@@ -76,26 +77,27 @@ Model fit_operator(const TrainKernel &input, const mat &xt, const mat &x,
   vec yt = y;
   std::frexp(arma::abs(yt).max(), &initial);
   yt.transform([&](double v) { return std::scalbn(v, -initial); });
-  double offset = arma::all(x.col(0) == 1) ? yt[0] : 0;
+  const bool intercept = design.intercept < p;
+  double offset = intercept ? yt[0] : 0;
   yt -= offset;
+  vec trend;
+  require(arma::solve(trend, xt, yt, arma::solve_opts::no_approx),
+          "fixed effect rank");
+  double response_norm = arma::norm(yt);
+  yt -= xt * trend;
+  require(arma::norm(yt) > 64 * arma::datum::eps * response_norm,
+          "constant response or exact fixed-effect fit");
   std::frexp(arma::abs(yt).max(), &center);
   yt.transform([&](double v) { return std::scalbn(v, -center); });
   int exponent = initial + center;
   audit.scale_exponent = exponent;
   audit.fixed_rank = p;
-  vec ols;
-  require(arma::solve(ols, xt, yt, arma::solve_opts::no_approx),
-          "fixed effect rank");
-  require(arma::norm(yt - xt * ols) > 64 * arma::datum::eps * arma::norm(yt),
-          "constant response or exact fixed-effect fit");
   double g = 1, e = o.lambda, lik = NAN, objective = NAN;
   string status = "fixed";
   auto stage = std::chrono::steady_clock::now();
   if (o.varcomp != "fixed") {
 
-    double v = arma::var(yt);
-    if (v == 0)
-      v = arma::dot(yt, yt) / n;
+    double v = arma::dot(yt, yt) / (n - p);
     double g0 = o.initial_g ? std::scalbn(o.initial_g, -2 * exponent) : v / 2;
     double e0 = o.initial_e ? std::scalbn(o.initial_e, -2 * exponent) : v / 2;
     require(g0 > 0 && e0 > 0 && std::isfinite(g0 + e0),
@@ -147,13 +149,17 @@ Model fit_operator(const TrainKernel &input, const mat &xt, const mat &x,
     require(g > 0, "nonpositive fixed residual variance");
   }
   vec yh = x * b + u;
-  for (auto &v : yh)
-    v = std::scalbn(std::scalbn(v, center) + offset, initial);
+  vec fixed_trend = x * trend;
+  for (size_t i = 0; i < yh.n_elem; ++i)
+    yh[i] = std::scalbn((std::scalbn(yh[i], center) + fixed_trend[i]) + offset,
+                        initial);
   for (auto &v : u)
     v = std::scalbn(v, exponent);
   for (size_t j = 0; j < p; ++j)
-    b[j] = std::scalbn(std::scalbn(b[j], center) + (j == 0 ? offset : 0.),
+    b[j] = std::scalbn((std::scalbn(b[j], center) + trend[j]) +
+                           (j == design.intercept ? offset : 0.),
                        initial);
+  design.restore(b);
   double vu = std::scalbn(g, 2 * exponent), ve = std::scalbn(e, 2 * exponent);
   require(
       std::isfinite(vu) && std::isfinite(ve) && (!g || vu > 0) &&

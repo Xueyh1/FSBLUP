@@ -49,13 +49,65 @@ Estimates estimate_exact(const Contrast &c, size_t n, double g, double e,
   };
   // Check credible interior alternatives before an active-set boundary
   // shortcut.
+  const vec energy = arma::square(c.z);
+  auto profile = [&](double log_ratio) {
+    double ratio = std::exp(log_ratio);
+    vec denom = c.eigen + ratio;
+    double a = arma::mean(energy / denom);
+    ++audit.trials;
+    double lik = -.5 * (df * (1 + std::log(a)) + arma::accu(arma::log(denom)));
+    return Estimates{a, a * ratio, lik, "profile"};
+  };
+  // Inspect the profiled likelihood on the existing contrast spectrum.
+  // Adjacent grid slopes bracket competing maxima; refine those intervals
+  // without constructing another kernel or altering the EM update rule.
+  std::vector<Estimates> peaks;
   double interior_bound = -INFINITY;
-  if (!boundary.empty())
-    for (int j = -36; j <= 36; ++j) {
-      double ratio = std::exp(double(j) / 2),
-             a = arma::mean(arma::square(c.z) / (c.eigen + ratio));
-      interior_bound = std::max(interior_bound, evaluate(a, a * ratio).lik);
+  double pivot = std::log(km);
+  std::vector<double> grid;
+  for (int j = -72; j <= 72; ++j) {
+    double log_ratio = pivot + .5 * j;
+    if (c.eigen.min() + std::exp(log_ratio) <= 0)
+      continue;
+    grid.push_back(log_ratio);
+  }
+  std::vector<double> values;
+  for (double z : grid) {
+    values.push_back(profile(z).lik);
+    interior_bound = std::max(interior_bound, values.back());
+  }
+  for (size_t j = 1; j + 1 < grid.size(); ++j) {
+    if (!(values[j] > values[j - 1] + 1e-12 &&
+          values[j] > values[j + 1] + 1e-12))
+      continue;
+    double lo = grid[j - 1], hi = grid[j + 1];
+    for (int h = 0; h < 26; ++h) {
+      double left = (2 * lo + hi) / 3, right = (lo + 2 * hi) / 3;
+      if (profile(left).lik < profile(right).lik)
+        lo = left;
+      else
+        hi = right;
     }
+    peaks.push_back(profile((lo + hi) / 2));
+    interior_bound = std::max(interior_bound, peaks.back().lik);
+  }
+  double q = arma::mean(energy / (g * c.eigen + e));
+  if (q < .01 || q > 100) {
+    g *= q;
+    e *= q;
+  }
+  if (peaks.size() > 1) {
+    auto best = std::max_element(
+        peaks.begin(), peaks.end(),
+        [](const auto &a, const auto &b) { return a.lik < b.lik; });
+    for (const auto &v : peaks)
+      audit.steps.push_back(
+          {0, 0, v.g, v.e, v.lik, 0, 0, 0, 0, "profile-peak"});
+    g = best->g;
+    e = best->e;
+  }
+  audit.initial_vu = std::scalbn(g, 2 * audit.scale_exponent);
+  audit.initial_ve = std::scalbn(e, 2 * audit.scale_exponent);
   double previous = -INFINITY;
   for (int it = 0; it <= o.max_reml; ++it) {
     audit.updates = it;
@@ -83,6 +135,7 @@ Estimates estimate_exact(const Contrast &c, size_t n, double g, double e,
       return b;
     };
     if (scaled <= o.score_tol &&
+        std::abs(arma::mean(energy / (g * c.eigen + e)) - 1) <= o.score_tol &&
         (it == 0 ||
          std::abs(d.lik - previous) <= o.score_tol * (1 + std::abs(d.lik)))) {
       record("interior", 0, 0, 0);

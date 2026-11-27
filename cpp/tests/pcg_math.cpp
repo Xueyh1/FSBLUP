@@ -71,6 +71,19 @@ int main() {
             require(audit.steps[j].lik >= audit.steps[j - 1].lik - 1e-12,
                     "nonmonotone");
         }
+    {
+      mat design = arma::join_rows(x, 2 * q.col(1) + 20000);
+      uvec swap = {1, 0};
+      FitOptions fixed;
+      fixed.varcomp = "fixed";
+      fixed.lambda = .5;
+      FitAudit state;
+      auto left = fit_model(k, design, y, t, fixed, state);
+      auto right = fit_model(k, design.cols(swap), y, t, fixed, state);
+      close(arma::abs(left.u - right.u).max(), 0, 1e-10);
+      close(arma::abs(left.yhat - right.yhat).max(), 0, 1e-10);
+      close(arma::abs(left.b - right.b.elem(swap)).max(), 0, 1e-8);
+    }
     FitOptions o;
     o.varcomp = "em-reml";
     {

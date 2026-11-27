@@ -113,7 +113,7 @@ void write_audits(const fs::path &dir, const std::vector<FitAudit> &audits,
          "workspace_mib\tinitial_Vu\tinitial_"
          "Ve\tpreconditioner\tprec_rank\tzero_rhs\tresidual_restarts\tcentered_"
          "solves\trtol\tatol\tprobe_seed\tprobe_solver\ttrace_"
-         "stride\tupdates\tcross_rhs\tstatus\n";
+         "stride\tupdates\tcross_rhs\tstatus\trequested_Vu\trequested_Ve\n";
     for (auto &a : audits)
       f << a.context << '\t' << o.solver << '\t' << o.varcomp << '\t' << a.n
         << '\t' << a.rhs << '\t' << a.matvec << '\t' << a.max_iterations << '\t'
@@ -131,7 +131,7 @@ void write_audits(const fs::path &dir, const std::vector<FitAudit> &audits,
         << '\t' << a.centered_solves << '\t' << o.rtol << '\t' << o.atol << '\t'
         << o.seed << '\t' << (o.probe_lanczos ? "lanczos+pcg-check" : "pcg")
         << '\t' << o.record_every << '\t' << a.updates << '\t' << a.cross_rhs
-        << '\t' << a.status << '\n';
+        << '\t' << a.status << '\t' << o.initial_g << '\t' << o.initial_e << '\n';
   });
   write_file(dir / (prefix + "reml_trace.tsv"), [&](std::ostream &f) {
     f << "context\testimator\ttrace\titeration\tVu\tVe\tcontrast_loglik\tscore_"

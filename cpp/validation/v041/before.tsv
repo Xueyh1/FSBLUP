@@ -1,0 +1,36 @@
+large-start	ai-reml	0	0	1	1000000000000	1000000000000	0	1000000000000	1000000000000	1	interior	-43.147130364726387
+two-peaks	ai-reml	0	0	1	2.1810912999999998	2.1810912999999998	42	3.0959422767203777	2.3138745373201619	0.74738943123039003	interior	-8.5063377925754438
+design	ai-reml	0	0	1	3.4285714285714275	3.4285714285714275	5	2.0000000000000839	0.99999999999964928	0.49999999999980366	interior	-8.9070147788768246
+design	ai-reml	1000000.0	0	1	571428571432	571428571432	0	571428571432	571428571432	1	interior	-85.476796664539179
+design ai-reml 0 20000 1 run=1479640 thread=1479640 info command=fit stage=start
+run=1479640 thread=1479640 info stage=read_kernels seconds=0.000447
+run=1479640 thread=1479640 info solver=pcg varcomp=ai-reml trace=exact
+run=1479640 thread=1479640 info stage=read_phenotype seconds=0.000093
+run=1479640 thread=1479640 info stage=fusion seconds=0.000407
+run=1479640 thread=1479640 error stage=failed reason=ill-conditioned fixed-effect system
+fsblup: ill-conditioned fixed-effect system
+design ai-reml 0 0 100000000.0 run=1479704 thread=1479704 info command=fit stage=start
+run=1479704 thread=1479704 info stage=read_kernels seconds=0.000430
+run=1479704 thread=1479704 info solver=pcg varcomp=ai-reml trace=exact
+run=1479704 thread=1479704 info stage=read_phenotype seconds=0.000091
+run=1479704 thread=1479704 info stage=fusion seconds=0.000407
+run=1479704 thread=1479704 error stage=failed reason=ill-conditioned fixed-effect system
+fsblup: ill-conditioned fixed-effect system
+large-start	em-reml	0	0	1	1000000000000	1000000000000	0	1000000000000	1000000000000	1	interior	-43.147130364726387
+two-peaks	em-reml	0	0	1	2.1810912999999998	2.1810912999999998	450	3.0959422736246296	2.3138745381623225	0.7473894322497534	interior	-8.5063377925754455
+design	em-reml	0	0	1	3.4285714285714275	3.4285714285714275	2424	1.9999999991437387	1.0000000023894458	0.5000000014087882	interior	-8.9070147788768246
+design	em-reml	1000000.0	0	1	571428571432	571428571432	0	571428571432	571428571432	1	interior	-85.476796664539179
+design em-reml 0 20000 1 run=1480024 thread=1480024 info command=fit stage=start
+run=1480024 thread=1480024 info stage=read_kernels seconds=0.000431
+run=1480024 thread=1480024 info solver=pcg varcomp=em-reml trace=exact
+run=1480024 thread=1480024 info stage=read_phenotype seconds=0.000092
+run=1480024 thread=1480024 info stage=fusion seconds=0.000407
+run=1480024 thread=1480024 error stage=failed reason=ill-conditioned fixed-effect system
+fsblup: ill-conditioned fixed-effect system
+design em-reml 0 0 100000000.0 run=1480088 thread=1480088 info command=fit stage=start
+run=1480088 thread=1480088 info stage=read_kernels seconds=0.000577
+run=1480088 thread=1480088 info solver=pcg varcomp=em-reml trace=exact
+run=1480088 thread=1480088 info stage=read_phenotype seconds=0.000095
+run=1480088 thread=1480088 info stage=fusion seconds=0.000412
+run=1480088 thread=1480088 error stage=failed reason=ill-conditioned fixed-effect system
+fsblup: ill-conditioned fixed-effect system

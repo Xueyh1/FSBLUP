@@ -1,4 +1,4 @@
-#include "core.hpp"
+#include "design.hpp"
 #include <cmath>
 namespace fsb {
 // Apply the p QR reflectors to K and y.  Once the leading coordinate of a
@@ -55,7 +55,8 @@ Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
   }
   require(k.n_rows == k.n_cols && k.n_rows == x.n_rows && y.n_elem == k.n_rows,
           "model dimensions");
-  mat xt = x.rows(train);
+  BalancedDesign design(x.rows(train), x);
+  const mat &xt = design.train;
   vec yt = y.elem(train);
   size_t n = xt.n_rows, p = x.n_cols;
   require(p > 0 && n > p && arma::rank(xt) == p,
@@ -73,12 +74,17 @@ Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
     exponent = 0;
   // Translate the response when the first design column is an intercept.
   // Contrasts and genomic predictions are invariant to this translation.
-  const double offset = arma::all(x.col(0) == 1.) ? yt(0) : 0.;
+  const double offset = design.intercept < p ? yt(0) : 0.;
   yt -= offset;
+  vec trend;
+  require(arma::solve(trend, xt, yt, arma::solve_opts::no_approx),
+          "fixed effect rank");
+  double original_norm = arma::norm(yt);
+  yt -= xt * trend;
   mat kt = k.submat(train, train);
   vec eigen, z;
   residual_spectrum(kt, xt, yt, eigen, z);
-  require(arma::norm(z) > 64 * arma::datum::eps * arma::norm(yt),
+  require(arma::norm(z) > 64 * arma::datum::eps * original_norm,
           "constant response or exact fixed-effect fit");
   const vec z_squared = arma::square(z);
   auto profile = [&](double log_lambda) {
@@ -151,8 +157,11 @@ Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
   require(arma::solve(b, wx, wy, arma::solve_opts::no_approx), "GLS failed");
   vec residual = arma::solve(arma::trimatu(lower.t()), wy - wx * b);
   vec u = k.cols(train) * residual;
-  vec yhat = x * b + u + offset;
-  b(0) += offset;
+  b += trend;
+  vec yhat = design.target * b + u + offset;
+  if (design.intercept < p)
+    b(design.intercept) += offset;
+  design.restore(b);
   if (exponent != 0) {
     auto restore_units = [exponent](double v) {
       return std::scalbn(v, exponent);

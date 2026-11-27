@@ -97,9 +97,10 @@ int main(int argc, char **argv) {
                   {{ids.begin() + 5, ids.end()}, arma::eye(3, 3)}};
     auto path = fs::temp_directory_path() /
                 ("fsblup-repeat-" + std::to_string(getpid()));
+    size_t threads = entries("/proc/self/task");
     for (int i = 0; i < 6; ++i)
       exercise(layers, path);
-    size_t fd = entries("/proc/self/fd"), threads = entries("/proc/self/task");
+    size_t fd = entries("/proc/self/fd");
     std::cout << "iteration\tallocated_bytes\trss_KiB\tpss_KiB\tfds\tthreads\n";
     for (int i = 0; i <= repeats; ++i) {
       if (i)
