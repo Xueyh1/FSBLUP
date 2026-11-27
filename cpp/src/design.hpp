@@ -5,7 +5,7 @@ namespace fsb {
 // Estimate the change of basis on training rows only. Preserve column order
 // so published coefficients correspond to the caller's original terms.
 struct BalancedDesign {
-  mat train, target;
+  mat train, target, triangular;
   vec origin, scale;
   arma::uword intercept;
   BalancedDesign(const mat &xt, const mat &x)
@@ -16,7 +16,7 @@ struct BalancedDesign {
                 target.is_finite(),
             "training design rank deficient or no residual degrees of freedom");
     for (arma::uword j = 0; j < train.n_cols; ++j)
-      if (arma::all(train.col(j) == 1) && arma::all(target.col(j) == 1)) {
+      if (arma::all(train.col(j) == 1)) {
         intercept = j;
         break;
       }
@@ -34,13 +34,28 @@ struct BalancedDesign {
       train.col(j) /= scale[j];
       target.col(j) /= scale[j];
     }
-    require(arma::rank(train) == train.n_cols,
+    if (train.n_cols == 1)
+      return;
+    mat q;
+    require(arma::qr_econ(q, triangular, train), "training design QR failed");
+    vec singular = arma::svd(triangular);
+    require(singular.min() >
+                double(train.n_rows) * arma::datum::eps * singular.max(),
             "training design rank deficient");
+    double factor = std::sqrt(double(train.n_rows));
+    triangular /= factor;
+    target = arma::solve(arma::trimatl(triangular.t()), target.t(),
+                         arma::solve_opts::no_approx)
+                 .t();
+    train = q * factor;
   }
-  void restore(vec &b) const {
+  void restore(vec &b, double offset = 0) const {
+    if (!triangular.empty())
+      b = arma::solve(arma::trimatu(triangular), b,
+                      arma::solve_opts::no_approx);
     b /= scale;
     if (intercept < b.n_elem)
-      b[intercept] -= arma::dot(origin, b);
+      b[intercept] += offset - arma::dot(origin, b);
   }
 };
 } // namespace fsb

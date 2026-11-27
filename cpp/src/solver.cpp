@@ -159,9 +159,7 @@ Model solve(const mat &k, const mat &x, const vec &y, const uvec &train,
   vec u = k.cols(train) * residual;
   b += trend;
   vec yhat = design.target * b + u + offset;
-  if (design.intercept < p)
-    b(design.intercept) += offset;
-  design.restore(b);
+  design.restore(b, offset);
   if (exponent != 0) {
     auto restore_units = [exponent](double v) {
       return std::scalbn(v, exponent);

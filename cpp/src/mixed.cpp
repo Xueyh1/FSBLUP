@@ -164,10 +164,10 @@ Model fit_operator(const TrainKernel &input, const mat &training,
   for (auto &v : u)
     v = std::scalbn(v, exponent);
   for (size_t j = 0; j < p; ++j)
-    b[j] = std::scalbn((std::scalbn(b[j], center) + trend[j]) +
-                           (j == design.intercept ? offset : 0.),
-                       initial);
-  design.restore(b);
+    b[j] = std::scalbn(b[j], center) + trend[j];
+  design.restore(b, offset);
+  for (double &v : b)
+    v = std::scalbn(v, initial);
   double vu = std::scalbn(g, 2 * exponent), ve = std::scalbn(e, 2 * exponent);
   require(
       std::isfinite(vu) && std::isfinite(ve) && (!g || vu > 0) &&
