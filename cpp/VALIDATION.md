@@ -26,6 +26,7 @@ srun -n1 -c4 --mem=5G bash validation/v042/replay.sh "$OLD_FSBLUP" before
 srun -n1 -c4 --mem=5G bash validation/v042/replay.sh build/fsblup after
 python3 tools/v042_numeric.py "$OLD_FSBLUP" build/fsblup numerical-replay
 srun -n1 -c4 --mem=4G build/repeat_test 1000
+srun -n1 -c4 --mem=8G bash validation/v042/debug.sh new-debug
 ```
 
 ### 0.4.2 调试、资源与发布
