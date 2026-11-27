@@ -504,7 +504,8 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
     });
   }
   std::optional<FusionPlan> reference;
-  if (!cache)
+  if (!cache && std::any_of(folds.begin(), folds.end(),
+                            [](const Fold &f) { return f.reason.empty(); }))
     reference.emplace(l);
   FitOptions fold_options = opts;
   fold_options.ids = &refs;
@@ -516,7 +517,7 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
                                         sizeof(Iteration) / trace_budget));
   fold_options.memory_mb = worker_cap;
   string score_policy = opt.get("score-policy", "relative");
-  auto rule = scoring_rule(metric, truth, y, score_policy);
+  auto rule = validation_rule(metric, truth, y, score_policy, folds);
   const size_t scorable =
       std::count_if(folds.begin(), folds.end(),
                     [](const Fold &f) { return f.reason.empty(); });
@@ -575,8 +576,8 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
                  ",matvec=" + std::to_string(mv) +
                  ",probes=" + std::to_string(probes) + "]";
       ev.attempts = history;
-      if (ev.reason.find("probe budget exhausted") == string::npos ||
-          !scorable || ceiling > remaining / scorable / 2)
+      if (!ev.probe_exhausted || !scorable ||
+          ceiling > remaining / scorable / 2)
         break;
       ceiling *= 2;
       size_t cost = scorable * ceiling;
@@ -595,10 +596,14 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
       ev = std::move(next);
     }
   };
-  auto result = search(
-      opt.has("strict-simplex"), rule,
-      [&](double a, double b) { return evaluate(a, b, fold_options); },
-      tm.weight_workers, retry);
+  Search result;
+  if (!scorable)
+    result.stop = "no scorable fold: " + folds.front().reason;
+  else
+    result = search(
+        opt.has("strict-simplex"), rule,
+        [&](double a, double b) { return evaluate(a, b, fold_options); },
+        tm.weight_workers, retry);
 
   std::vector<FitAudit> audits;
   for (auto &t : result.trials)
@@ -647,7 +652,7 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
   size_t selected = count, failures = 0;
   Fusion kernel;
   std::optional<FusionPlan> full;
-  if (!cache)
+  if (!cache && count)
     full.emplace(layers);
   for (;;) {
     size_t next = count;
@@ -741,7 +746,7 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
     scored += e.reason.empty() && std::isfinite(e.value);
     completed += std::count_if(e.scores.begin(), e.scores.end(),
                                [](double s) { return std::isfinite(s); });
-    bool exhausted = e.reason.find("probe budget exhausted") != string::npos;
+    bool exhausted = e.probe_exhausted;
     probe_failed += exhausted;
     numerical += e.outcome == "fit_failed" && !exhausted;
     invalid += e.outcome == "invalid";
@@ -759,7 +764,8 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
          "coverage\tcandidates_visited\tcandidates_scored\tscorable_folds_per_"
          "point\tfolds_completed\tprobe_exhausted\tnumerical_failures\tinvalid_"
          "kernel\tuncertified\tretry_budget\tretry_reserved\tfolds_scored_last_"
-         "attempt\tfold_attempts\tfull_invalid\tfull_uncertified\n"
+         "attempt\tfold_attempts\tfull_invalid\tfull_uncertified\tvalidation_"
+         "unscorable\n"
       << t.metric << '\t'
       << (selected < count ? trials[selected].result.value : NAN) << '\t'
       << result.stop << '\t' << field(t.coverage) << '\t' << result.alpha
@@ -775,10 +781,12 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
       << '\t' << completed << '\t' << attempted << '\t'
       << failures - std::count(uncertified.begin(), uncertified.end(), true)
       << '\t' << std::count(uncertified.begin(), uncertified.end(), true)
-      << '\n';
+      << '\t' << t.fold_columns.size() - t.scorable << '\n';
   });
   if (!std::isfinite(result.best))
-    throw TuningFailure(result.stop + ": " + trials.front().result.reason);
+    throw TuningFailure(count
+                            ? result.stop + ": " + trials.front().result.reason
+                            : result.stop);
   if (selected == count)
     throw TuningFailure(
         "no reference-eligible weights produced a valid full covariance; " +

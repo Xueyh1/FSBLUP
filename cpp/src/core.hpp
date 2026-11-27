@@ -64,6 +64,9 @@ struct PdBlock {
   PdTimes timing;
   double norm_f = 0., relative_norm_f = 0., max_abs_change = 0.;
 };
+struct ProbeExhausted : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
 struct CertificationUnavailable : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
@@ -133,6 +136,7 @@ std::vector<Fold> split(const Labels &, bool temporal, const vec &truth,
 double score(const vec &, const vec &, const string &);
 struct Evaluation {
   double value = NAN;
+  bool probe_exhausted = false;
   string reason, correction, outcome = "evaluated";
   std::vector<double> scores;
   std::vector<FitAudit> fits;
@@ -172,6 +176,8 @@ struct ScoreRule {
 };
 ScoreRule scoring_rule(const string &metric, const vec &truth,
                        const vec &response, const string &policy);
+ScoreRule validation_rule(const string &, const vec &, const vec &,
+                          const string &, const std::vector<Fold> &);
 Search
 search(bool strict, ScoreRule rule,
        const std::function<Evaluation(double, double)> &evaluate,

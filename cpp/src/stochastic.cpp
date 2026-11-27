@@ -578,9 +578,10 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
           lik + 3.5 * arma::stddev(cur.lik) / std::sqrt(double(count)) +
                   cur.depth * x.n_rows >
               zero_lik) {
-        require(count < o.max_probes,
-                "stochastic precision insufficient: probe budget exhausted "
-                "comparing boundary");
+        if (count >= o.max_probes)
+          throw ProbeExhausted(
+              "stochastic precision insufficient: probe budget exhausted "
+              "comparing boundary");
         count = std::min(2 * count, o.max_probes);
         continue;
       }
@@ -599,8 +600,9 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
       a.steps.push_back({it, 0, g, e, lik, cur.score[0], cur.score[1], 0, 0,
                          "increase-probes", count, a.paired_se, cur.depth,
                          info_rank});
-      require(count < o.max_probes,
-              "stochastic precision insufficient: probe budget exhausted");
+      if (count >= o.max_probes)
+        throw ProbeExhausted(
+            "stochastic precision insufficient: probe budget exhausted");
       count = std::min(2 * count, o.max_probes);
       a.logratio_se = 0;
     };

@@ -147,6 +147,11 @@ void assess_folds(Evaluation &e, const std::vector<Fold> &folds,
       auto model = fit(f, audit);
       e.scores[j] = score(truth.elem(f.valid), model.u.elem(f.valid), metric);
       require(std::isfinite(e.scores[j]), "nonfinite validation score");
+    } catch (const ProbeExhausted &ex) {
+      e.probe_exhausted = true;
+      e.outcome = "fit_failed";
+      e.reason = audit.context + ": " + ex.what();
+      audit.status = e.reason;
     } catch (const CertificationUnavailable &ex) {
       e.outcome = "uncertified";
       e.reason = audit.context + ": " + ex.what();
@@ -205,6 +210,20 @@ ScoreRule scoring_rule(const string &metric, const vec &truth,
   if (!scale)
     scale = root_mean_square(response);
   return {true, scale > 0 ? scale : 1};
+}
+ScoreRule validation_rule(const string &metric, const vec &truth, const vec &y,
+                          const string &policy,
+                          const std::vector<Fold> &folds) {
+  vec rms_truth(folds.size()), rms_y(folds.size());
+  size_t n = 0;
+  for (const auto &fold : folds)
+    if (fold.reason.empty()) {
+      rms_truth[n] = root_mean_square(truth.elem(fold.valid));
+      rms_y[n++] = root_mean_square(y.elem(fold.valid));
+    }
+  if (!n)
+    return {metric == "rmse", 1};
+  return scoring_rule(metric, rms_truth.head(n), rms_y.head(n), policy);
 }
 Search search(bool strict, ScoreRule rule,
               const std::function<Evaluation(double, double)> &evaluate,
