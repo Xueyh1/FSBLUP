@@ -1,0 +1,7 @@
+case	label	train	candidates	retained_snps	backend	domain	threads	memory_MiB	RSS_KiB	feature_B	verified_B	RHS	matvec	wall_s	alpha	beta	coverage
+topology	v2-0	16	8	8	operator	fixed	1	128	14336	48	84320	2	36	0.2046886384487152	0	1	NA
+topology	v3-0	16	8	8	operator	fixed	1	128	13824	48	139131	2	36	0.024355195462703705	0	1	NA
+topology	v2-1	16	8	8	operator	fixed	1	128	14336	48	84320	2	36	0.2046370729804039	0	1	NA
+topology	v3-1	16	8	8	operator	fixed	1	128	13824	48	139131	2	36	0.024899922311306	0	1	NA
+topology	v2-2	16	8	8	operator	fixed	1	128	14336	48	84320	2	36	0.2048862874507904	0	1	NA
+topology	v3-2	16	8	8	operator	fixed	1	128	13824	48	139131	2	36	0.023700259625911713	0	1	NA

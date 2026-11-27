@@ -1,0 +1,24 @@
+==================
+WARNING: ThreadSanitizer: data race (pid=1494160)
+  Write of size 4 at 0x000001898798 by main thread:
+    #0 main::$_0::operator()() const /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/tools/debug/control.cpp:26:9 (control-tsan+0x4bc488) (BuildId: 92447ac1e9ed9a75ba5302d96f5038eabf276564)
+    #1 main /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/tools/debug/control.cpp:32:3 (control-tsan+0x4bc488)
+
+  Previous write of size 4 at 0x000001898798 by thread T1:
+    #0 main::$_0::operator()() const /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/tools/debug/control.cpp:26:9 (control-tsan+0x4bc5ea) (BuildId: 92447ac1e9ed9a75ba5302d96f5038eabf276564)
+    #1 void std::__invoke_impl<void, main::$_0>(std::__invoke_other, main::$_0&&) /opt/rh/gcc-toolset-15/root//usr/lib/gcc/x86_64-redhat-linux/15/../../../../include/c++/15/bits/invoke.h:63:14 (control-tsan+0x4bc5ea)
+    #2 std::__invoke_result<main::$_0>::type std::__invoke<main::$_0>(main::$_0&&) /opt/rh/gcc-toolset-15/root//usr/lib/gcc/x86_64-redhat-linux/15/../../../../include/c++/15/bits/invoke.h:98:14 (control-tsan+0x4bc5ea)
+    #3 void std::thread::_Invoker<std::tuple<main::$_0>>::_M_invoke<0ul>(std::_Index_tuple<0ul>) /opt/rh/gcc-toolset-15/root//usr/lib/gcc/x86_64-redhat-linux/15/../../../../include/c++/15/bits/std_thread.h:303:13 (control-tsan+0x4bc5ea)
+    #4 std::thread::_Invoker<std::tuple<main::$_0>>::operator()() /opt/rh/gcc-toolset-15/root//usr/lib/gcc/x86_64-redhat-linux/15/../../../../include/c++/15/bits/std_thread.h:310:11 (control-tsan+0x4bc5ea)
+    #5 std::thread::_State_impl<std::thread::_Invoker<std::tuple<main::$_0>>>::_M_run() /opt/rh/gcc-toolset-15/root//usr/lib/gcc/x86_64-redhat-linux/15/../../../../include/c++/15/bits/std_thread.h:255:13 (control-tsan+0x4bc5ea)
+    #6 <null> <null> (libstdc++.so.6+0xdbae3) (BuildId: 9875cb1defa7be44ca202740705be268a04b770b)
+
+  Location is global 'shared_value' of size 4 at 0x000001898798 (control-tsan+0x1898798)
+
+  Thread T1 (tid=1494163, finished) created by main thread at:
+    #0 pthread_create <null> (control-tsan+0x435c4e) (BuildId: 92447ac1e9ed9a75ba5302d96f5038eabf276564)
+    #1 std::thread::_M_start_thread(std::unique_ptr<std::thread::_State, std::default_delete<std::thread::_State>>, void (*)()) <null> (libstdc++.so.6+0xdbbb8) (BuildId: 9875cb1defa7be44ca202740705be268a04b770b)
+    #2 __libc_start_call_main <null> (libc.so.6+0x2a60f) (BuildId: a0c9599772f18aa10b6f2220ec80f9b6f7a63994)
+
+SUMMARY: ThreadSanitizer: data race /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/tools/debug/control.cpp:26:9 in main::$_0::operator()() const
+==================

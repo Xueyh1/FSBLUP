@@ -6,6 +6,7 @@ struct PedigreeOperator {
   Ids ids;
   std::vector<long> sire, dam;
   vec diag, d;
+  PedigreeOperator() = default;
   explicit PedigreeOperator(const Table &);
   mat apply(mat x) const;
   std::function<mat(const mat &)> restricted(const uvec &rows) const;
@@ -24,6 +25,10 @@ struct FeatureFile {
   mat apply(const mat &x, size_t block, CacheIO &io,
             const uvec *subset = nullptr) const;
 };
+using Product = std::function<mat(const mat &)>;
+struct ProductPair {
+  Product train, cross;
+};
 struct PopulationKernel {
   Ids ids;
   vec diagonal;
@@ -32,14 +37,18 @@ struct PopulationKernel {
   std::function<std::function<mat(const mat &)>(const uvec &, double)>
       train_apply;
   double retained_mib = 0;
+  std::function<ProductPair(const uvec &, const uvec &, const uvec &, double,
+                            size_t)>
+      common_products;
+  size_t active_count = 0;
   TrainKernel restrict(const Ids &targets, const uvec &train, double cap,
-                       double solver_mib = 0) const;
+                       double solver_mib = 0, size_t rhs_panel = 32) const;
 };
 struct Cache {
+  uint64_t verified_bytes = 0;
   PedigreeOperator ped;
   FeatureFile g, o;
   CacheIO io;
-  uint64_t verified_bytes = 0;
   bool streaming = false, resident = false;
   explicit Cache(const fs::path &, double cap);
   string coverage;

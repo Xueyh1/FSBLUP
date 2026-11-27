@@ -1,4 +1,4 @@
-#include "core.hpp"
+#include "cache.hpp"
 #include "near_pd.hpp"
 #include <chrono>
 #include <fstream>
@@ -19,7 +19,8 @@ int kib(const char *field) {
       return std::stoi(line.substr(std::strlen(field)));
   return -1;
 }
-void exercise(const Layers &layers, const fs::path &path) {
+void exercise(const Layers &layers, const fs::path &path,
+              const fs::path &cache_dir) {
   mat feature(9, 3);
   for (size_t j = 0; j < feature.n_cols; ++j)
     for (size_t i = 0; i < feature.n_rows; ++i)
@@ -41,6 +42,29 @@ void exercise(const Layers &layers, const fs::path &path) {
   FitAudit derived;
   auto fitted = fit_model(testk, design, testy, train, exact, derived);
   require(fitted.u.is_finite() && !derived.steps.empty(), "repeated AI fit");
+  exact.varcomp = "em-reml";
+  exact.max_reml = 8000;
+  auto em = fit_model(testk, design, testy, train, exact, derived);
+  require(em.u.is_finite(), "repeated EM fit");
+  Cache cache(cache_dir, 256);
+  Ids cache_ids(cache.ped.ids.begin(), cache.ped.ids.begin() + 8);
+  auto cache_folds =
+      split({{1, {1, 2, 1, 2, 1, 2, 1, 2}}}, false, testy, "rmse");
+  auto cache_search = search(
+      true, true,
+      [&](double a, double b) {
+        auto prepared = cache.prepare(cache_ids, a, b, PdPolicy::strict, 256);
+        Evaluation ev;
+        assess_folds(ev, cache_folds, testy, "rmse", a, b,
+                     [&](const Fold &fold, FitAudit &trace) {
+                       auto op = prepared.restrict(cache_ids, fold.train, 256);
+                       return fit_operator(op, design.rows(fold.train), design,
+                                           testy.elem(fold.train), pcg, trace);
+                     });
+        return ev;
+      },
+      2);
+  require(std::isfinite(cache_search.best), "repeated cache CV");
   pcg.max_pcg = 1;
   bool failed = false;
   try {
@@ -97,14 +121,24 @@ int main(int argc, char **argv) {
                   {{ids.begin() + 5, ids.end()}, arma::eye(3, 3)}};
     auto path = fs::temp_directory_path() /
                 ("fsblup-repeat-" + std::to_string(getpid()));
+    auto cache_dir = path.string() + "-cache";
+    fs::create_directory(cache_dir);
+    fs::path data = FSBLUP_TEST_DATA;
+    prepare_cache(data / "ped.tsv", data / "snp.tsv", data / "omics.tsv", false,
+                  cache_dir, 256, true);
+    // Start sanitizer and pthread runtime services before recording the
+    // process baseline. Join a single short-lived worker and let procfs
+    // retire its task entry before exercising any model code.
+    std::thread([] {}).join();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     size_t threads = entries("/proc/self/task");
     for (int i = 0; i < 6; ++i)
-      exercise(layers, path);
+      exercise(layers, path, cache_dir);
     size_t fd = entries("/proc/self/fd");
     std::cout << "iteration\tallocated_bytes\trss_KiB\tpss_KiB\tfds\tthreads\n";
     for (int i = 0; i <= repeats; ++i) {
       if (i)
-        exercise(layers, path);
+        exercise(layers, path, cache_dir);
       if (i == 0 || i == repeats || i % 10 == 0) {
         // The kernel can briefly list a joined thread after pthread_join
         // returns.
@@ -121,6 +155,7 @@ int main(int argc, char **argv) {
       }
     }
     fs::remove(path);
+    fs::remove_all(cache_dir);
     return 0;
   } catch (const std::exception &e) {
     std::cerr << e.what() << '\n';

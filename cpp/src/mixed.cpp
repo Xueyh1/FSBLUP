@@ -26,15 +26,15 @@ Model fit_operator(const TrainKernel &input, const mat &training,
   audit.n = y.n_elem;
   size_t n = y.n_elem, p = targets.n_cols;
   require(training.n_rows == n && y.is_finite(), "invalid training response");
-  BalancedDesign design(training, targets);
-  const auto &xt = design.train, &x = design.target;
-  double work = solver_workspace(n, x.n_rows, p, o);
+  double work = solver_workspace(n, targets.n_rows, p, o);
   if (work / 1048576. >= o.memory_mb)
     throw std::runtime_error("training solver needs " +
                              std::to_string(work / 1048576.) +
                              " MiB, exceeding --memory-mb; use fixed PCG or an "
                              "operator with Hutchinson traces");
   audit.workspace_mib = work / 1048576.;
+  BalancedDesign design(training, targets);
+  const auto &xt = design.train, &x = design.target;
   TrainKernel kernel = input;
   kernel.dense = [fn = input.dense, cost = input.dense_column_cost, &audit] {
     audit.matvec += cost;
@@ -100,6 +100,14 @@ Model fit_operator(const TrainKernel &input, const mat &training,
     double v = arma::dot(yt, yt) / (n - p);
     double g0 = o.initial_g ? std::scalbn(o.initial_g, -2 * exponent) : v / 2;
     double e0 = o.initial_e ? std::scalbn(o.initial_e, -2 * exponent) : v / 2;
+    if (o.initial_g > 0 && o.initial_e > 0 &&
+        (!std::isfinite(g0 + e0) || g0 == 0 || e0 == 0)) {
+      // The requested components can be representable in user units while
+      // the fold's power-of-two units overflow. Preserve their proportions.
+      long double total = static_cast<long double>(o.initial_g) + o.initial_e;
+      g0 = v * (static_cast<long double>(o.initial_g) / total);
+      e0 = v * (static_cast<long double>(o.initial_e) / total);
+    }
     require(g0 > 0 && e0 > 0 && std::isfinite(g0 + e0),
             "invalid initial variances");
     audit.initial_vu = std::scalbn(g0, 2 * exponent);

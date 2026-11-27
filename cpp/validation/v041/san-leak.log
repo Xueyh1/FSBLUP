@@ -1,0 +1,11 @@
+
+=================================================================
+==1494152==ERROR: LeakSanitizer: detected memory leaks
+
+Direct leak of 79 byte(s) in 1 object(s) allocated from:
+    #0 0x0000004a7768 in malloc (/storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/runs/v041/controls/control-san+0x4a7768) (BuildId: 70f18492e352d8e3ac9fa663a462a9bd35cca884)
+    #1 0x0000004ed309 in allocation(bool) /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/tools/debug/control.cpp:9:41
+    #2 0x0000004ed6cb in main /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/tools/debug/control.cpp:18:5
+    #3 0x7fd6f3c2a60f in __libc_start_call_main (/lib64/libc.so.6+0x2a60f) (BuildId: a0c9599772f18aa10b6f2220ec80f9b6f7a63994)
+
+SUMMARY: AddressSanitizer: 79 byte(s) leaked in 1 allocation(s).

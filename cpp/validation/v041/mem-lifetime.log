@@ -1,0 +1,23 @@
+srun: job 31110 queued and waiting for resources
+srun: job 31110 has been allocated resources
+==1570682== Memcheck, a memory error detector
+==1570682== Copyright (C) 2002-2026, and GNU GPL'd, by Julian Seward et al.
+==1570682== Using Valgrind-3.27.1 and LibVEX; rerun with -h for copyright info
+==1570682== Command: build-pcg-mem/repeat_test 8
+==1570682==
+==1570682==
+==1570682== HEAP SUMMARY:
+==1570682==     in use at exit: 165,818 bytes in 3,248 blocks
+==1570682==   total heap usage: 191,006 allocs, 187,758 frees, 43,872,647 bytes allocated
+==1570682==
+==1570682== LEAK SUMMARY:
+==1570682==    definitely lost: 0 bytes in 0 blocks
+==1570682==    indirectly lost: 0 bytes in 0 blocks
+==1570682==      possibly lost: 0 bytes in 0 blocks
+==1570682==    still reachable: 165,818 bytes in 3,248 blocks
+==1570682==         suppressed: 0 bytes in 0 blocks
+==1570682== Reachable blocks (those to which a pointer was found) are not shown.
+==1570682== To see them, rerun with: --leak-check=full --show-leak-kinds=all
+==1570682==
+==1570682== For lists of detected and suppressed errors, rerun with: -s
+==1570682== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)

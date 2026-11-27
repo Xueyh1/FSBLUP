@@ -1,0 +1,2 @@
+cohort	train	candidates	SNP	omics	folds	fold_train	fold_validation	backend	domain	blas_threads	solver_budget_MiB	candidates_tested	eligible	fold_fits_attempted	status	alpha	beta	RHS	matvec	RSS_KiB	wall_s	feature_bytes	verified_cache_bytes
+150000	120000	30000	50000	9	2	60000	60000	operator	simplex	8	65536	19	10	29	approx-interior	0.5	0.25	210	13272	47992728	9312.9498502539991	35037000000	1901519503

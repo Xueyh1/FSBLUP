@@ -11,7 +11,10 @@ int main(int argc, char **argv) {
     require(cache.mode() == argv[3], "coverage");
     Ids ids = l.a.ids;
     std::reverse(ids.begin(), ids.end());
-    for (auto weights : {std::pair{.02, .4}, std::pair{0., 0.}}) {
+    std::vector<std::pair<double, double>> cases = {{.02, .4}, {0, 0}};
+    if (cache.mode() == "A")
+      cases.emplace_back(-.01, -.01);
+    for (auto weights : cases) {
       auto ref =
           fuse(l, weights.first, weights.second, nullptr, PdPolicy::near_pd);
       auto order = positions(l.a.ids, ids);
@@ -34,6 +37,24 @@ int main(int argc, char **argv) {
           "training product");
       require(arma::abs(sys.cross(b) - expected.cols(train) * b).max() < 2e-8,
               "cross product");
+      if (cache.mode() == "A") {
+        uvec subset = {2, 7, 0, 5, 3}, local = {3, 1, 0};
+        Ids targets;
+        for (auto row : subset)
+          targets.push_back(ids[row]);
+        for (bool stream : {false, true}) {
+          cache.streaming = stream;
+          auto partial = cache.prepare(ids, weights.first, weights.second,
+                                       PdPolicy::near_pd, 256);
+          auto test = partial.restrict(targets, local, 256);
+          uvec t = subset.elem(local);
+          require(arma::abs(test.cross(v.rows(t)) -
+                            expected.submat(subset, t) * v.rows(t))
+                          .max() < 2e-8,
+                  "sparse permuted cross product");
+        }
+        cache.streaming = false;
+      }
     }
     return 0;
   } catch (const std::exception &e) {

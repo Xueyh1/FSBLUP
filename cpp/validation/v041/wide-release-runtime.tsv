@@ -1,0 +1,2 @@
+blas	threads	peak_rss_kib	wall_seconds	weight_workers
+OpenBLAS 0.3.29 DYNAMIC_ARCH NO_AFFINITY SkylakeX MAX_THREADS=128	8	47989076	210.407397	1

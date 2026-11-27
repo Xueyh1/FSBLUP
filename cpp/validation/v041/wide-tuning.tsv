@@ -1,0 +1,2 @@
+metric	selection_score	stop	coverage	reference_best_alpha	reference_best_beta	reference_best_score	selected_alpha	selected_beta	full_rejections	requested_domain	backend	search_coverage
+rmse	1.5093990628158189	improvement < 1e-4	A=120000 G=120000 O=120000 union=120000 intersection=120000 O_only=0 G_only=0 GO_only=0 A_only=0 AO_only=0 AG_only=0 AGO=120000 example_7=i0000001	0.5	0.25	1.5093990628158189	0.5	0.25	0	simplex	operator	complete

@@ -1,0 +1,20 @@
+stage	alpha	beta	mean	valid	reason	correction	r1f1	r1f2	reference_best	full_status	full_reason	pd_policy	nearpd_blocks	max_relative_normF	full_nearpd_blocks	full_max_relative_normF	requested_domain	backend	candidate_status	search_coverage
+grid	0	0	nan	0	alpha=0.000000 beta=0.000000 repeat=1 fold=1: stochastic precision insufficient: probe budget exhausted	K:jitter=1e-6	nan	nan	0	not_checked		strict	0	0	NA	NA	simplex	operator	fit_failed	complete
+grid	0	0.25	nan	0	alpha=0.000000 beta=0.250000 repeat=1 fold=1: stochastic precision insufficient: probe budget exhausted	K:jitter=1e-6	nan	nan	0	not_checked		strict	0	0	NA	NA	simplex	operator	fit_failed	complete
+grid	0	0.5	1.5441124369432913	1		K:jitter=1e-6	1.5462478931647887	1.5419769807217938	0	not_checked		strict	0	0	NA	NA	simplex	operator	evaluated	complete
+grid	0	0.75	1.5540447383191478	1		K:jitter=1e-6	1.5560814754766943	1.5520080011616011	0	not_checked		strict	0	0	NA	NA	simplex	operator	evaluated	complete
+grid	0	1	1.5598668796710711	1		K:jitter=1e-6	1.5618571636674965	1.5578765956746459	0	not_checked		strict	0	0	NA	NA	simplex	operator	evaluated	complete
+grid	0.25	0	nan	0	alpha=0.250000 beta=0.000000 repeat=1 fold=1: stochastic precision insufficient: probe budget exhausted	K:jitter=1e-6	nan	nan	0	not_checked		strict	0	0	NA	NA	simplex	operator	fit_failed	complete
+grid	0.25	0.25	nan	0	alpha=0.250000 beta=0.250000 repeat=1 fold=1: stochastic precision insufficient: probe budget exhausted	K:jitter=1e-6	nan	nan	0	not_checked		strict	0	0	NA	NA	simplex	operator	fit_failed	complete
+grid	0.25	0.5	1.5168829158233057	1		K:jitter=1e-6	1.5193204557055382	1.5144453759410732	0	not_checked		strict	0	0	NA	NA	simplex	operator	evaluated	complete
+grid	0.25	0.75	1.5259291372186976	1		K:jitter=1e-6	1.5282861871721545	1.5235720872652407	0	not_checked		strict	0	0	NA	NA	simplex	operator	evaluated	complete
+grid	0.5	0	nan	0	alpha=0.500000 beta=0.000000 repeat=1 fold=1: stochastic precision insufficient: probe budget exhausted	K:jitter=1e-6	nan	nan	0	not_checked		strict	0	0	NA	NA	simplex	operator	fit_failed	complete
+grid	0.5	0.25	1.5093990628158189	1		K:jitter=1e-6	1.5119305607348257	1.506867564896812	1	selected		strict	0	0	0	0	simplex	operator	evaluated	complete
+grid	0.5	0.5	1.5259227187377604	1		K:jitter=1e-6	1.5282757433512579	1.5235696941242631	0	not_checked		strict	0	0	NA	NA	simplex	operator	evaluated	complete
+grid	0.75	0	nan	0	alpha=0.750000 beta=0.000000 repeat=1 fold=1: stochastic precision insufficient: probe budget exhausted	K:jitter=1e-6	nan	nan	0	not_checked		strict	0	0	NA	NA	simplex	operator	fit_failed	complete
+grid	0.75	0.25	1.5259206765637661	1		K:jitter=1e-6	1.528272334183971	1.5235690189435611	0	not_checked		strict	0	0	NA	NA	simplex	operator	evaluated	complete
+grid	1	0	nan	0	alpha=1.000000 beta=0.000000 repeat=1 fold=1: stochastic precision insufficient: probe budget exhausted	K:jitter=1e-6	nan	nan	0	not_checked		strict	0	0	NA	NA	simplex	operator	fit_failed	complete
+refine1	0.375	0.125	nan	0	alpha=0.375000 beta=0.125000 repeat=1 fold=1: stochastic precision insufficient: probe budget exhausted	K:jitter=1e-6	nan	nan	0	not_checked		strict	0	0	NA	NA	simplex	operator	fit_failed	complete
+refine1	0.375	0.375	1.5141398843584857	1		K:jitter=1e-6	1.5166080845159933	1.5116716842009783	0	not_checked		strict	0	0	NA	NA	simplex	operator	evaluated	complete
+refine1	0.625	0.125	nan	0	alpha=0.625000 beta=0.125000 repeat=1 fold=1: stochastic precision insufficient: probe budget exhausted	K:jitter=1e-6	nan	nan	0	not_checked		strict	0	0	NA	NA	simplex	operator	fit_failed	complete
+refine1	0.625	0.375	1.5259214874909037	1		K:jitter=1e-6	1.5282736934615113	1.5235692815202961	0	not_checked		strict	0	0	NA	NA	simplex	operator	evaluated	complete

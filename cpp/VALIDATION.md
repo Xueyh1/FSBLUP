@@ -1,5 +1,33 @@
 # 数值与发布验收记录
 
+## 0.4.1 数值回归
+
+2026-11-27 开工时本地与远程 cpp 均为 `f21497f82830e01a465fa6b539b89f825a63284a`，工作树干净。旧版 14 项 CTest 全部通过。工作区没有 `FSBLUP_0.4.0_cpp_audit_and_replay.zip`，解析例按规划给定谱重建，其余使用仓库原始数据或种子固定的模拟数据。[旧版基线](validation/v041/baseline.log)
+
+| 复验 | 0.4.0 现象与原因 | 0.4.1 实测 |
+|---|---|---|
+| 8 个参考，1 个候选，表型增加 10⁶x | 用原始表型尺度初始化，绝对梯度过小，两种方法第 0 轮均返回 Vu=Ve=571428571432 | AI 的 Vu/Ve 为 1.99999999996 / 1.00000000006，EM 为 1.99999999910 / 1.00000000244。两者 ℓ=−8.90701477885 |
+| 4 个参考，请求 Vu=Ve=10¹² | 两种方法原地收敛，ℓ=−43.14713 | 保持初始比值，实际均从 1.65555556 起步，AI 4 次、EM 1962 次更新，ℓ=−3.95263739 |
+| 平移、缩放、调换固定列顺序 | 协变量加 20000 或乘 10⁸使 GLS 法方程报病态 | 按训练折平衡设计并还原系数，检查了训练和候选逐 ID 的 u/yhat、表型增加 Xc 后的系数和平移量 |
+| 双峰 | 单一起点停在 λ≈0.74738943、ℓ=−8.50633779 | 校验剖面局部区间与单侧 KKT 边界，AI/EM 最终 λ≈0.005105209、ℓ=−7.41302154006。选择后的更新分别为 3/50 |
+| 2-bit 元数据、稀疏预测、不同预算的选权 | 整表加载、全群特征回读、证书限制改变可评分点 | 逐行解码字典、按输出 ID 做交叉乘法、参考与全群逐点认证，见性能表 |
+| 固定权重 PCG 超限 | 工作目录清理时丢失内部日志和轨迹 | 测试核对退出码、stderr、目录内日志、失败摘要及成功模型文件缺席。磁盘短写和 /dev/full flush 另有测试 |
+| 大尺度组学与小差值 | 未缩放平方和可溢出；在大偏移上直接更新均值会损失小差值 | build/prepare 共用偏移、二进制缩放与标准化。24 个体的 2i 和 10²⁰⁰i 核差 <10⁻¹²，预测差 <10⁻¹⁰。三组值的 SD 与 √(64/23) 相差 <10⁻¹⁴ |
+
+解析例使用不含 −df·log(2π)/2 的正交误差对比似然，输入核在 CLI 扰动前减去 10⁻⁶I。EM 保留自身的方差更新式和迭代上限。精确内点同时检查无量纲 score、似然变化及 |yᵀPy/df−1|。对数比值的有限网格用于发现可分辨的竞争峰，不能证明任意连续谱上已找到全部峰。随机迹在两种训练规模、三组数据种子、三个探针种子和两种估计器的 36 项试验中全部完成，最大 |log λ 误差| 为 0.01053，最大相对预测 RMSE 为 0.00766。[旧版逐例输出](validation/v041/before.tsv) · [修复结果](validation/v041/after.tsv) · [随机迹](validation/v041/samples.tsv)
+
+官方模式 C 用 R 4.4.1、Matrix 1.7-0 和 rrBLUP 4.6.3 重新计算，顺序与遮蔽保持一致。1407 个体核在一次扰动后投影 2 轮，投影量相对扰动后输入为 8.5508902542%。C++ 修正核相对 R 修正核的最大元素差为 5.98×10⁻¹⁴，相对 Frobenius 差为 5.23×10⁻¹⁴。178 个训练和 20 个留出个体的全体最大 u/yhat 差分别为 4.33×10⁻⁶ / 4.14×10⁻⁶（AI）和 4.71×10⁻⁶ / 4.50×10⁻⁶（EM）。20 个候选的排序全部一致。独立 GLS 使用相同 C++ λ 时最大差为 5.46×10⁻¹¹。[矩阵和分量误差](validation/v041/official.json) · [五种方法](validation/v041/official.tsv)
+
+在 cpp 目录运行以下命令。旧版可从指定基线单独构建，复验脚本使用新目录。官方例重建需要上述 R 包，运行交付的 fsblup 二进制只需 Linux。
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DARMADILLO_INCLUDE_DIR="$PWD/.deps/include"
+srun -n1 -c4 --mem=8G cmake --build build -j4
+srun -n1 -c4 --mem=6G ctest --test-dir build --output-on-failure
+srun -n1 -c4 --mem=6G bash validation/v041/replay.sh build/fsblup /path/to/0.4.0/fsblup new-results /path/to/official-example
+srun -n1 -c4 --mem=4G env OPENBLAS_NUM_THREADS=1 build/repeat_test 1000
+```
+
 0.4.0 的 PCG、AI/EM、随机迹误差、特征缓存与 Slurm 大群体记录见 [PCG 开发与验收报告](PCG.md)。下文保留之前发布版的实测基线。
 
 0.3.0 已以 d3ba237 为基线复验官方 178/20 模型、候选排名和嵌套逐折评分，并完成并行、内存和 glibc 2.34 验收。[0.3.0 性能与严格调试报告](PERFORMANCE.md)
@@ -182,3 +210,17 @@ srun -n1 -c1 --mem=2G tools/clean-smoke.sh ubuntu-base dist/fsblup-0.2.0-linux-x
 ```
 
 此测试在隔离环境内逐 ID 核验全部 24 行固定权重 u/yhat 与 R 参考的绝对误差 ≤1e−5，并检验候选数为 4。Slurm 共享宿主内核。当前支持密集单核单性状。任意非嵌套覆盖、多组学任意多核、重复记录、PLINK 原生格式、APY 和矩阵自由解法属于后续范围。
+
+### 0.4.1 运行时与发布复验
+
+150000 个体、50000 SNP 的两折作业和发布版同 λ 预测校验已完成，逐候选结果含探针预算耗尽的 9 个点，见[宽数据实测](PERFORMANCE.md)及[原始折分数](validation/v041/wide-search.tsv)。
+
+Release、Clang ASan+UBSan（开启 LSan）及独立 TSan 以及 Valgrind Memcheck 均通过 16 项 CTest。独立 Memcheck 寿命进程退出时直接、间接和可能丢失字节均为 0，仍可达 165818 B。检测器阳性对照分别命中 79 字节泄漏与数据竞争，阴性对照正常退出。寿命测试在同一进程反复加载缓存、执行真实的并行折拟合、PCG、精确 AI/EM、投影和错误返回。预热后 1000 轮起末均为 4 个 FD、1 个线程，RSS 从 21332 到 23432 KiB，最后 200 轮各采样点的活跃分配均为 367648 B。TSan 首次启动工作线程会创建一个运行时线程，基线采样前先启动并 join 一个空工作线程，使其在整个测试中受到同一计数规则的检查。[寿命采样](validation/v041/lifetime.tsv) · [阳性及阴性对照](validation/v041/detectors.tsv) · [组学列统计](validation/v041/omics.tsv)
+
+CentOS Stream 9 x86_64 构建的程序已随所需动态库打包，并在无 R 的 UBI 9 Minimal 独立根文件系统中运行。复验包括解析 nearPD、4 工作者嵌套选权、v3 缓存 prepare/fit 和官方模式 C。官方例的 K、u、yhat 在隔离环境输出后重新与 R 比较。[隔离环境官方误差](validation/v041/clean-official.json)
+
+```bash
+bash tools/package.sh build dist
+srun -n1 -c4 --mem=5G bash tools/clean-smoke.sh "$UBI_ROOT" \
+  dist/fsblup-0.4.1-linux-x86_64-glibc2.34.tar.gz new-ubi-results "$OFFICIAL_EXAMPLE" "$R_REFERENCE/masked.tsv"
+```

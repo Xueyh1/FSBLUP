@@ -101,6 +101,16 @@ FitOptions fit_options(const Options &opt, Timing &tm) {
   }
   return o;
 }
+size_t feature_panel(const FitOptions &o, size_t n) {
+  size_t width = 1;
+  if (o.trace == "hutchinson")
+    width = std::max(o.batch, size_t(o.trace_rank));
+  else if (o.varcomp != "fixed" || o.solver == "direct")
+    width = 32;
+  if (o.preconditioner == "nystrom")
+    width = std::max(width, size_t(o.rank));
+  return std::min(width, n);
+}
 void write_audits(const fs::path &dir, const std::vector<FitAudit> &audits,
                   const FitOptions &o, const string &prefix) {
   write_file(dir / (prefix + "pcg_summary.tsv"), [&](std::ostream &f) {
@@ -169,7 +179,8 @@ PdPolicy read_policy(const Options &opt) {
 void write_pd(const fs::path &dir, const Fusion &fusion, PdPolicy policy) {
   write_file(dir / "pd.tsv", [&](std::ostream &f) {
     f << "block\tpolicy\taction\tjitter\titerations\tconverged\tmin_eigen_raw"
-         "\tmin_eigen_used\tnormF\trelative_normF\tmax_abs_change\trel_tol\n";
+         "\tmin_eigen_used\tnormF\trelative_normF\tmax_abs_change\trel_"
+         "tol\tscope\n";
     auto optional_value = [&](double x) {
       if (std::isfinite(x))
         f << x;
@@ -186,7 +197,7 @@ void write_pd(const fs::path &dir, const Fusion &fusion, PdPolicy policy) {
       f << '\t' << d.norm_f << '\t' << d.relative_norm_f << '\t'
         << d.max_abs_change << '\t';
       optional_value(d.rel_tol);
-      f << '\n';
+      f << "\tfull\n";
     }
   });
 }
@@ -489,7 +500,8 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
                                refs, f.train, worker_cap,
                                solver_workspace(f.train.n_elem, refs.size(),
                                                 p.x.n_cols, fold_options) /
-                                   1048576.);
+                                   1048576.,
+                               feature_panel(fold_options, f.train.n_elem));
                            return fit_operator(op, x.rows(f.train), x,
                                                y.elem(f.train), fold_options,
                                                audit);
@@ -797,9 +809,9 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
   tm.times.emplace_back("nearPD_reconstruction", pd.reconstruction);
   tm.times.emplace_back("nearPD_matrix_work", pd.matrix_work);
   write_file(dir / "fusion.tsv", [&](std::ostream &f) {
-    f << "mode\talpha\tbeta\tcorrection\tpd_policy\n"
+    f << "mode\talpha\tbeta\tcorrection\tpd_policy\tscope\n"
       << mode << '\t' << a << '\t' << b << '\t' << k.correction << '\t'
-      << policy_name(policy) << '\n';
+      << policy_name(policy) << "\tfull\n";
   });
   write_pd(dir, k, policy);
   if (tm.log)
@@ -837,7 +849,8 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
         auto op = selected_operator->restrict(
             p.ids, p.ref, cap,
             solver_workspace(p.ref.n_elem, p.ids.size(), p.x.n_cols, opts) /
-                1048576.);
+                1048576.,
+            feature_panel(opts, p.ref.n_elem));
         m = fit_operator(op, p.x.rows(p.ref), p.x, p.y.elem(p.ref), opts,
                          audit);
       } else
@@ -852,7 +865,8 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
     if (cache)
       write_file(dir / "cache_usage.tsv", [&](auto &f) {
         f << "mode\tbackend\tfeature_bytes\tread_calls\tread_seconds\tdecode_"
-             "seconds\tverified_cache_bytes\tstorage\ttargets\n"
+             "seconds\tverified_cache_bytes\tstorage\ttargets\tactive_"
+             "component_ids\n"
           << mode << '\t' << (use_op ? "operator" : "dense") << '\t'
           << cache->io.bytes.load() << '\t' << cache->io.reads.load() << '\t'
           << cache->io.read_ns.load() * 1e-9 << '\t'
@@ -861,7 +875,8 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
           << (cache->streaming  ? "stream"
               : cache->resident ? "resident"
                                 : "auto")
-          << '\t' << p.ids.size() << '\n';
+          << '\t' << p.ids.size() << '\t'
+          << (use_op ? selected_operator->active_count : 0) << '\n';
       });
 
     tm.mark("final_reml_blup");

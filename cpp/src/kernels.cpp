@@ -1,5 +1,6 @@
 #include "core.hpp"
 #include "near_pd.hpp"
+#include "omics.hpp"
 #include <chrono>
 #include <queue>
 namespace fsb {
@@ -137,25 +138,25 @@ Features omics(mat x, bool fpkm) {
   Features out;
   for (size_t j = 0; j < x.n_cols; ++j) {
     vec v(x.colptr(j), x.n_rows, false, true);
-    size_t low = 0;
+    OmicsMoment stats;
     for (double &value : v) {
       if (std::isnan(value)) {
         value = 0;
         ++out.imputed;
-      } else if (!std::isfinite(value))
-        throw std::runtime_error("nonfinite omics feature");
-      low += value < .1;
+      }
+      stats.add(value);
     }
-    if (fpkm && low * 100 >= 95 * v.n_elem) {
+    if (stats.filtered(fpkm)) {
       ++out.filtered;
       continue;
     }
-    if (v.min() == v.max()) {
+    if (stats.sd() == 0) {
       ++out.constant;
       continue;
     }
-    double mean = arma::mean(v), sd = arma::stddev(v);
-    x.col(out.kept++) = (v - mean) / sd;
+    auto dest = x.colptr(out.kept++);
+    for (size_t i = 0; i < v.n_elem; ++i)
+      dest[i] = stats.standardized(v[i]);
   }
   require(out.kept > 0, "no remaining omics features");
   feature_gram(x, out, out.kept);
@@ -205,8 +206,8 @@ bool cholesky_succeeds(const mat &covariance) {
   mat factor;
   return arma::chol(factor, covariance);
 }
-mat adjusted(const mat &raw, string &note, PdPolicy policy,
-             PdDiagnostics diagnostics, PdBlock &d) {
+mat adjusted(const mat &raw, PdPolicy policy, PdDiagnostics diagnostics,
+             PdBlock &d) {
   require(raw.is_finite(), d.block + ": nonfinite covariance");
   constexpr double jitter = 1e-6;
   mat k = raw;
@@ -219,7 +220,6 @@ mat adjusted(const mat &raw, string &note, PdPolicy policy,
     require(eigen.min() >= -tolerance,
             d.block + ": indefinite covariance, min eigenvalue=" +
                 std::to_string(eigen.min()));
-    note += "semidefinite/roundoff,";
     require(cholesky_succeeds(k),
             d.block + ": covariance still singular after jitter");
     d.min_used = d.min_raw + jitter;
@@ -253,10 +253,8 @@ mat adjusted(const mat &raw, string &note, PdPolicy policy,
                             .count();
       d.max_abs_change = arma::abs(result.matrix - k).max();
     }
-    note += "jitter=1e-6,nearPD";
     return std::move(result.matrix);
   }
-  note += "jitter=1e-6";
   return k;
 }
 mat factor_block(const mat &base, const string &label) {
@@ -285,14 +283,14 @@ string pd_summary(const std::vector<PdBlock> &blocks) {
       result += ";";
     result += d.block + ":jitter=1e-6";
     if (d.projected)
-      result += ",nearPD";
+      result += ",nearPD(iterations=" + std::to_string(d.iterations) +
+                ",relative_normF=" + std::to_string(d.relative_norm_f) + ")";
   }
   return result;
 }
 mat adjust_covariance(const mat &raw, PdPolicy policy,
                       PdDiagnostics diagnostics, PdBlock &d) {
-  string note;
-  return adjusted(raw, note, policy, diagnostics, d);
+  return adjusted(raw, policy, diagnostics, d);
 }
 FusionPlan::Nested::Nested(const Layers &l) {
   const mat &a = l.a.values;
@@ -327,7 +325,6 @@ Fusion FusionPlan::combine(double alpha, double beta, BlockAudit *audit,
   const Layers &l = layers_;
   const mat &a = l.a.values;
   const string &mode = mode_;
-  string note;
   mat raw;
   std::vector<PdBlock> pd_blocks;
   if (mode == "A") {
@@ -341,16 +338,13 @@ Fusion FusionPlan::combine(double alpha, double beta, BlockAudit *audit,
     // The entire propagated G/O layer has zero weight, even when its internal
     // calibration cannot be identified (for example, with one omics sample).
     raw = a;
-    note = "K:";
     if (audit)
       *audit = {};
   } else if (mode == "B") {
     mat g = l.g.subset(l.a.ids).values;
     auto s = positions(l.a.ids, l.o.ids), u = outside(a.n_rows, s);
-    note = "Gss:";
     pd_blocks.push_back({"Gss"});
-    mat base =
-        adjusted(g.submat(s, s), note, policy, diagnostics, pd_blocks.back());
+    mat base = adjusted(g.submat(s, s), policy, diagnostics, pd_blocks.back());
     auto &o = l.o.values;
     double od = arma::mean(o.diag()), gd = arma::mean(base.diag());
     mat t = base;
@@ -378,7 +372,6 @@ Fusion FusionPlan::combine(double alpha, double beta, BlockAudit *audit,
     double scale = arma::mean(h.diag());
     require(scale > 0, "nonpositive BB000 scale");
     raw = beta * h / scale + (1 - beta) * a;
-    note += ";K:";
   } else {
     // Equation 3 with group 3 empty. Groups 1/2/4: pedigree only,
     // genotyped only, and jointly observed. All regressions use original A.
@@ -399,7 +392,7 @@ Fusion FusionPlan::combine(double alpha, double beta, BlockAudit *audit,
   }
   symmetrize(raw, arma::abs(raw).max());
   pd_blocks.push_back({"K"});
-  mat k = adjusted(raw, note, policy, diagnostics, pd_blocks.back());
+  mat k = adjusted(raw, policy, diagnostics, pd_blocks.back());
   return {std::move(raw), std::move(k), pd_summary(pd_blocks),
           std::move(pd_blocks)};
 }

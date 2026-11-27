@@ -59,6 +59,30 @@ def run(root):
         )
         built = invoke(root, "raw" + mode, "build", sources)
         subprocess.run([MATH, cache, built, mode], check=True)
+    repaired = invoke(
+        root,
+        "cache-nearpd",
+        "fit",
+        [
+            "--cache",
+            root / "cacheC",
+            "--cache-backend",
+            "operator",
+            "--pd-policy",
+            "nearPD",
+            *weights,
+            *model,
+            *fixed,
+            "--log-file",
+            root / "cache-nearpd" / "fit.log",
+        ],
+    )
+    pd = rows(repaired / "pd.tsv")[0]
+    summary = rows(repaired / "fusion.tsv")[0]
+    assert summary["scope"] == pd["scope"] == "full" and pd["iterations"] == "2"
+    assert 0.0099 < float(pd["relative_normF"]) < 0.0101 and pd["action"] == "nearPD"
+    assert "K:jitter=1e-6,nearPD(iterations=2" in summary["correction"]
+    assert summary["correction"] in (repaired / "fit.log").read_text()
     expected = rows(DATA / "fixed_lambda.tsv")
     for solver in ["pcg", "direct"]:
         for pre in ["jacobi", "identity", "nystrom"] if solver == "pcg" else ["direct"]:
@@ -114,12 +138,28 @@ def run(root):
         "iteration-limit",
     )
     failed = root / "limit-log"
-    invoke(root, "limit-log", "fit",
-           [*matrices,*weights,*model,*fixed,"--pcg-maxiter",1,"--log-file",failed/"logs"/"fit.log"],
-           "iteration-limit")
-    assert "iteration-limit" in (failed/"logs"/"fit.log").read_text()
-    assert "iteration-limit" in rows(failed/"pcg_summary.tsv")[0]["status"]
-    assert not (failed/"model.tsv").exists() and not (failed/"predictions.tsv").exists()
+    invoke(
+        root,
+        "limit-log",
+        "fit",
+        [
+            *matrices,
+            *weights,
+            *model,
+            *fixed,
+            "--pcg-maxiter",
+            1,
+            "--log-file",
+            failed / "logs" / "fit.log",
+        ],
+        "iteration-limit",
+    )
+    assert "iteration-limit" in (failed / "logs" / "fit.log").read_text()
+    assert "iteration-limit" in rows(failed / "pcg_summary.tsv")[0]["status"]
+    assert (
+        not (failed / "model.tsv").exists()
+        and not (failed / "predictions.tsv").exists()
+    )
     invoke(
         root,
         "emlimit",
@@ -172,16 +212,24 @@ def run(root):
     )
     for name in ("search.tsv", "predictions.tsv", "folds.tsv"):
         assert (serial / name).read_bytes() == (parallel / name).read_bytes()
-    dense = invoke(root,"dense-cv","fit",[("dense" if v=="operator" else v) for v in tune])
-    for x,y in zip(rows(dense/"search.tsv"),rows(serial/"search.tsv")):
-        assert (x["alpha"],x["beta"],x["full_status"]) == (y["alpha"],y["beta"],y["full_status"])
+    dense = invoke(
+        root, "dense-cv", "fit", [("dense" if v == "operator" else v) for v in tune]
+    )
+    for x, y in zip(rows(dense / "search.tsv"), rows(serial / "search.tsv")):
+        assert (x["alpha"], x["beta"], x["full_status"]) == (
+            y["alpha"],
+            y["beta"],
+            y["full_status"],
+        )
         for key in x:
-            if key.startswith("r1f") and x["valid"]=="1":
-                assert abs(float(x[key])-float(y[key]))<1e-7
-    assert rows(serial/"tuning.tsv")[0]["search_coverage"]=="complete"
-    assert rows(serial/"tuning.tsv")[0]["requested_domain"]=="simplex"
-    assert any("cv_fold_fit_sum" in line and float(line.split("\t")[1])>0
-               for line in (serial/"timing.tsv").read_text().splitlines())
+            if key.startswith("r1f") and x["valid"] == "1":
+                assert abs(float(x[key]) - float(y[key])) < 1e-7
+    assert rows(serial / "tuning.tsv")[0]["search_coverage"] == "complete"
+    assert rows(serial / "tuning.tsv")[0]["requested_domain"] == "simplex"
+    assert any(
+        "cv_fold_fit_sum" in line and float(line.split("\t")[1]) > 0
+        for line in (serial / "timing.tsv").read_text().splitlines()
+    )
     with (root / "cacheA" / "G.bin").open("ab") as corrupt:
         corrupt.write(b"x")
     invoke(

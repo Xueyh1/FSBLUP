@@ -1,0 +1,44 @@
+NAME="Red Hat Enterprise Linux"
+VERSION="9.9 (Plow)"
+ID="rhel"
+ID_LIKE="fedora"
+VERSION_ID="9.9"
+PLATFORM_ID="platform:el9"
+PRETTY_NAME="Red Hat Enterprise Linux 9.9 (Plow)"
+ANSI_COLOR="0;31"
+LOGO="fedora-logo-icon"
+CPE_NAME="cpe:/o:redhat:enterprise_linux:9::baseos"
+HOME_URL="https://www.redhat.com/"
+DOCUMENTATION_URL="https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9"
+BUG_REPORT_URL="https://issues.redhat.com/"
+
+REDHAT_BUGZILLA_PRODUCT="Red Hat Enterprise Linux 9"
+REDHAT_BUGZILLA_PRODUCT_VERSION=9.9
+REDHAT_SUPPORT_PRODUCT="Red Hat Enterprise Linux"
+REDHAT_SUPPORT_PRODUCT_VERSION="9.9"
+glibc 2.34
+	linux-vdso.so.1 (0x00007ffe377e1000)
+	libopenblasp.so.0 => /opt/bin/../lib/libopenblasp.so.0 (0x00007f2f1b200000)
+	libcrypto.so.3 => /opt/bin/../lib/libcrypto.so.3 (0x00007f2f1ac00000)
+	libstdc++.so.6 => /opt/bin/../lib/libstdc++.so.6 (0x00007f2f1a800000)
+	libm.so.6 => /lib64/libm.so.6 (0x00007f2f1ab23000)
+	libgcc_s.so.1 => /opt/bin/../lib/libgcc_s.so.1 (0x00007f2f1e03d000)
+	libc.so.6 => /lib64/libc.so.6 (0x00007f2f1a400000)
+	libgfortran.so.5 => /opt/bin/../lib/libgfortran.so.5 (0x00007f2f1a000000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007f2f1e060000)
+	libz.so.1 => /lib64/libz.so.1 (0x00007f2f1e023000)
+	libquadmath.so.0 => /opt/bin/../lib/libquadmath.so.0 (0x00007f2f1aad9000)
+Vu	Ve	lambda	status	profile_objective	reference	candidate	solver	varcomp	trace	contrast_loglik
+1.9976194041952859	1.003534923512335	0.5023654262692725	approx-interior	NA	32	8	pcg	ai-reml	hutchinson	-38.795168623861343
+Vu	Ve	lambda	status	profile_objective	reference	candidate	solver	varcomp	trace	contrast_loglik
+0.60475246504276303	0.83745073977076312	1.3847826808139518	interior	6.3875556686493198	20	4	pcg	em-reml	exact	-11.69377783432466
+blas	threads	peak_rss_kib	wall_seconds	weight_workers
+OpenBLAS 0.3.29 DYNAMIC_ARCH NO_AFFINITY SkylakeX MAX_THREADS=128	1	16628	0.020266414999999999	4
+mode	alpha	beta	correction	pd_policy	scope
+C	0.75	0.25	K:jitter=1e-6,nearPD(iterations=2,relative_normF=0.160742)	nearPD	full
+block	policy	action	jitter	iterations	converged	min_eigen_raw	min_eigen_used	normF	relative_normF	max_abs_change	rel_tol	scope
+K	nearPD	nearPD	1e-6	2	1	-1	3.0000009587638488e-08	0.99999903000001011	0.31622739603040356	0.49999953000000996	0	full
+Vu	Ve	lambda	status	profile_objective	reference	candidate	solver	varcomp	trace	contrast_loglik
+0.60475243791981825	0.8374507604892214	1.3847827771803967	interior	6.3875556686493233	20	4	pcg	ai-reml	exact	-11.693777834324662
+metric	selection_score	stop	coverage	reference_best_alpha	reference_best_beta	reference_best_score	selected_alpha	selected_beta	full_rejections	requested_domain	backend	search_coverage
+rmse	1.4289268033393987	improvement < 1e-4	A=20 G=20 O=20 union=20 intersection=20 O_only=0 G_only=0 GO_only=0 A_only=0 AO_only=0 AG_only=0 AGO=20 example_7=001	0	0.25	1.4289268033393987	0	0.25	0	historical	dense	complete

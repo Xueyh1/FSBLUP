@@ -1,10 +1,16 @@
-# fsblup 0.4.0
+# fsblup 0.4.1
 
 Linux 命令行工具，用于单性状、每个个体一条表型记录的融合核 BLUP。将候选个体保留在表型文件里，性状填 `NA`。在 `predictions.tsv` 中按 `role=candidate` 取其带 ID 的 `u` 和 `yhat`。未列入表型文件的系谱祖先可以参与构核。
 
+0.4.1 在每个训练折平衡固定效应列，并在去除固定效应后的表型上估计方差。系数按输入单位输出。精确 AI 与 EM 复用误差对比谱检查竞争峰，`pcg_summary.tsv` 区分请求初值与实际初值，`reml_trace.tsv` 记录找到的竞争峰和迭代终点。Hutchinson 继续使用训练算子。[解析与官方示例验收](VALIDATION.md)
+
+默认选权保留历史细化域，`--strict-simplex` 将各轮限制在单纯形。检查 `tuning.tsv` 的 `requested_domain`、`backend` 和 `search_coverage`。当预算只能认证部分候选时，`partial` 表示所选权重只在已覆盖候选中获胜。`search_coverage` 描述请求域的认证覆盖，`search.tsv` 的 `valid`、`candidate_status` 与逐折原因记录实际完成评分的候选。固定权重求解超限返回非零退出码，失败输出保留 `failure.txt`、迭代摘要及指定的目录内日志。
+
+`prepare` 写入第 3 版缓存，清单包含拓扑亲本索引、孟德尔抽样方差和系谱对角的 SHA-256。读取第 1、2 版缓存时仍由系谱表重算。共同覆盖的预测按表型 ID 顺序输出，resident 模式复用已解码的训练行，另外仅读取候选行。[缓存与性能实测](PERFORMANCE.md)
+
 ## 直接运行
 
-发布包适用于 x86_64 Linux、glibc 2.34 及以上。解包后保留 `bin/` 和 `lib/` 的相对位置。程序、预测与调参均可在无 R 环境运行。0.4.0 在 CentOS Stream 9 构建，已在无 R 的 Red Hat UBI 9 Minimal 独立根文件系统（glibc 2.34）实测 nearPD 和多工作线程调参。以下命令在解包目录执行，输出目录使用新名字。源码树中可分别设置 `exe=build/fsblup` 和 `d=tests/data`。
+发布包适用于 x86_64 Linux、glibc 2.34 及以上。解包后保留 `bin/` 和 `lib/` 的相对位置。程序、预测与调参均可在无 R 环境运行。0.4.1 在 CentOS Stream 9 构建，已在无 R 的 Red Hat UBI 9 Minimal 独立根文件系统（glibc 2.34）实测 nearPD 和多工作线程调参。以下命令在解包目录执行，输出目录使用新名字。源码树中可分别设置 `exe=build/fsblup` 和 `d=tests/data`。
 
 ```bash
 exe=bin/fsblup

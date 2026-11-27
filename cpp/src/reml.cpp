@@ -100,9 +100,11 @@ Estimates estimate_exact(const Contrast &c, size_t n, double g, double e,
     auto best = std::max_element(
         peaks.begin(), peaks.end(),
         [](const auto &a, const auto &b) { return a.lik < b.lik; });
-    for (const auto &v : peaks)
-      audit.steps.push_back(
-          {0, 0, v.g, v.e, v.lik, 0, 0, 0, 0, "profile-peak"});
+    for (const auto &v : peaks) {
+      auto d = evaluate(v.g, v.e);
+      audit.steps.push_back({0, 0, v.g, v.e, d.lik, d.score[0], d.score[1], 0,
+                             0, "profile-peak"});
+    }
     g = best->g;
     e = best->e;
   }

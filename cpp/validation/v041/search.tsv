@@ -1,0 +1,24 @@
+stage	alpha	beta	mean	valid	reason	correction	r1f1	r1f2	reference_best	full_status	full_reason	pd_policy	nearpd_blocks	max_relative_normF	full_nearpd_blocks	full_max_relative_normF	requested_domain	backend	candidate_status	search_coverage
+grid	0	0	0.88513286560799131	1		K:jitter=1e-6	1.1285601953988877	0.64170553581709477	0	selected		strict	0	0	0	0	historical	operator	evaluated	partial
+grid	0	0.25	0.89051119819449553	1		K:jitter=1e-6	1.1361094528724522	0.64491294351653883	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+grid	0	0.5	0.9003103722110164	1		K:jitter=1e-6	1.1432668621960684	0.65735388222596425	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+grid	0	0.75	0.91326588733236025	1		K:jitter=1e-6	1.1502710395211471	0.67626073514357354	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+grid	0	1	0.92872186486905384	1		K:jitter=1e-6	1.1573011240084821	0.70014260572962561	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+grid	0.25	0	0.88576221782538389	1		K:jitter=1e-6	1.1279246579819693	0.64359977766879861	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+grid	0.25	0.25	0.88979187615582278	1		K:jitter=1e-6	1.1344585056385292	0.64512524667311621	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+grid	0.25	0.5	0.89842619365237886	1		K:jitter=1e-6	1.1408638778844777	0.65598850942027997	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+grid	0.25	0.75	0.91038307985232803	1		K:jitter=1e-6	1.1473076764098813	0.67345848329477487	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+grid	0.5	0	0.88697792892215643	1		K:jitter=1e-6	1.1275889198602551	0.64636693798405775	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+grid	0.5	0.25	0.88982911694848843	1		K:jitter=1e-6	1.1331706912295518	0.64648754266742492	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+grid	0.5	0.5	0.89745915364532647	1		K:jitter=1e-6	1.1388861149140699	0.65603219237658317	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+grid	0.75	0	0.88855395415518712	1		K:jitter=1e-6	1.1274606548913675	0.64964725341900675	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+grid	0.75	0.25	0.89043031702663833	1		K:jitter=1e-6	1.1321523496356769	0.64870828441759976	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+grid	1	0	0.89031088392398372	1		K:jitter=1e-6	1.1274774289171587	0.65314433893080881	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+refine1	-0.125	-0.125	0.88438764740612763	1		K:jitter=1e-6	1.1246719225582724	0.64410337225398273	1	rejected	signed-weight certification exceeds --memory-mb	strict	0	0	NA	NA	historical	operator	uncertified	partial
+refine1	-0.125	0.125	0.887523030288218	1		K:jitter=1e-6	1.1331574048855257	0.64188865569091025	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+refine1	0.125	-0.125	0.88538356767330617	1		K:jitter=1e-6	1.1244911861196407	0.64627594922697162	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+refine1	0.125	0.125	0.88702206127302174	1		K:jitter=1e-6	1.1317630750621497	0.64228104748389392	0	not_checked		strict	0	0	NA	NA	historical	operator	evaluated	partial
+refine2	-0.1875	-0.1875	0.88457951389118616	1		K:jitter=1e-6	1.1224047298211064	0.64675429796126593	0	rejected	signed-weight certification exceeds --memory-mb	strict	0	0	NA	NA	historical	operator	uncertified	partial
+refine2	-0.1875	-0.0625	0.884522973170626	1		K:jitter=1e-6	1.1270860505941871	0.64195989574706491	0	rejected	signed-weight certification exceeds --memory-mb	strict	0	0	NA	NA	historical	operator	uncertified	partial
+refine2	-0.0625	-0.1875	0.88504607335127916	1		K:jitter=1e-6	1.1223910232012753	0.64770112350128306	0	rejected	signed-weight certification exceeds --memory-mb	strict	0	0	NA	NA	historical	operator	uncertified	partial
+refine2	-0.0625	-0.0625	0.88459416517401934	1		K:jitter=1e-6	1.1267142926130811	0.64247403773495759	0	rejected	signed-weight certification exceeds --memory-mb	strict	0	0	NA	NA	historical	operator	uncertified	partial

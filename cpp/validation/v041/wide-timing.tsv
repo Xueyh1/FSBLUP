@@ -1,0 +1,16 @@
+stage	seconds
+read_kernels	6.8481265230000004
+read_phenotype	0.23974715999999999
+cv_fold_fit_sum	8349.5983624170003
+cv_copy_subset_sum	0
+cv_eigen_sum	0
+cv_reconstruction_sum	0
+cv_matrix_work_sum	0
+search	8355.6289316250004
+fusion	0.35988636400000001
+nearPD_copy_subset	0
+nearPD_eigen	0
+nearPD_reconstruction	0
+nearPD_matrix_work	0
+final_reml_blup	949.64456828100003
+write	0.21943581500000001

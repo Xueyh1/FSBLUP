@@ -1,4 +1,5 @@
 #include "cache.hpp"
+#include "omics.hpp"
 #include <fstream>
 #include <iomanip>
 #include <numeric>
@@ -44,8 +45,8 @@ Weights ancestors(long parent, const std::vector<long> &sire,
   return result;
 }
 struct Moment {
-  size_t count[3]{}, missing = 0, low = 0;
-  double mean = 0, m2 = 0;
+  size_t count[3]{}, missing = 0;
+  OmicsMoment omics;
 };
 void pack_features(const fs::path &input, const fs::path &dir, string name,
                    bool snp, bool fpkm, double cap, bool bits) {
@@ -92,10 +93,7 @@ void pack_features(const fs::path &input, const fs::path &dir, string name,
             require(v == 0 || v == 1 || v == 2, "invalid genotype");
             ++m.count[int(v)];
           } else {
-            m.low += v < .1;
-            double delta = v - m.mean;
-            m.mean += delta / n;
-            m.m2 += delta * (v - m.mean);
+            m.omics.add(v);
           }
         }
       });
@@ -103,14 +101,15 @@ void pack_features(const fs::path &input, const fs::path &dir, string name,
   size_t n = ids.size();
   require(n >= 2, "two or more feature rows required");
   std::vector<size_t> keep;
-  std::vector<double> impute, center, divisor;
+  std::vector<double> impute, center;
   double denom = 0;
   write_file(dir / (name + ".stats.tsv"), [&](auto &out) {
     out << "feature\tkeep\tmissing\timpute\tcenter\tdivisor\tp\tq\n";
     for (size_t j = 0; j < moments.size(); ++j) {
       auto &m = moments[j];
       bool retain = true;
-      double fill = 0, mu = m.mean, sd = 1, p = NAN, q = NAN;
+      double fill = 0, mu = snp ? 0 : m.omics.center(), sd = 1, p = NAN,
+             q = NAN;
       if (snp) {
         retain = m.missing <= n / 2;
         if (retain) {
@@ -123,14 +122,13 @@ void pack_features(const fs::path &input, const fs::path &dir, string name,
           denom += 2 * p * q;
         }
       } else {
-        sd = std::sqrt(m.m2 / (n - 1));
-        retain = sd > 0 && (!fpkm || m.low * 100 < 95 * n);
+        sd = m.omics.sd();
+        retain = sd > 0 && !m.omics.filtered(fpkm);
       }
       if (retain) {
         keep.push_back(j);
         impute.push_back(fill);
         center.push_back(mu);
-        divisor.push_back(sd);
       }
       out << field(header[j + 1]) << '\t' << retain << '\t' << m.missing << '\t'
           << fill << '\t' << mu << '\t' << sd << '\t' << p << '\t' << q << '\n';
@@ -143,8 +141,7 @@ void pack_features(const fs::path &input, const fs::path &dir, string name,
   size_t i = 0;
   std::vector<double> packed(keep.size());
   std::vector<uint8_t> codes((keep.size() + 3) / 4);
-  for (double &sd : divisor)
-    sd *= std::sqrt(denom);
+  double normalization = std::sqrt(denom);
   // Store normalized row-major doubles. Linux binary output uses the same
   // checked close as TSV.
   write_file(dir / (name + ".bin"), [&](auto &out) {
@@ -160,7 +157,8 @@ void pack_features(const fs::path &input, const fs::path &dir, string name,
                codes[j / 4] |= (std::isnan(v) ? 3 : int(v)) << (2 * (j % 4));
              if (std::isnan(v) || (snp && v == -9))
                v = impute[j];
-             v = (v - center[j]) / divisor[j];
+             v = snp ? (v - center[j]) / normalization
+                     : moments[keep[j]].omics.standardized(v) / normalization;
              if (!std::isfinite(v))
                throw std::runtime_error("nonfinite standardized feature");
              packed[j] = v;
@@ -189,7 +187,8 @@ void pack_features(const fs::path &input, const fs::path &dir, string name,
 const std::vector<string> files = {
     "ped.tsv", "G.bin",   "G.shape",   "G.ids.tsv",   "G.stats.tsv",
     "O.bin",   "O.shape", "O.ids.tsv", "O.stats.tsv", "sources.tsv"};
-fs::path validate(const fs::path &dir, double cap) {
+PedigreeOperator load_pedigree(const fs::path &dir, double cap,
+                               uint64_t &verified) {
   size_t rows = 0;
   scan_table(
       dir / "ped.tsv", [](auto &) {},
@@ -202,17 +201,53 @@ fs::path validate(const fs::path &dir, double cap) {
   string line;
   require(std::getline(f, line) &&
               (line == "fsblup-cache 1 little-endian f64" ||
-               line == "fsblup-cache 2 little-endian"),
+               line == "fsblup-cache 2 little-endian" ||
+               line == "fsblup-cache 3 little-endian"),
           "invalid cache version");
-  for (auto &file : files) {
+  bool topology = line == "fsblup-cache 3 little-endian";
+  auto verify = [&](const string &file) {
     string hash, key;
     require(bool(f >> hash >> key) && key == file && hash == digest(dir / file),
             "cache integrity failure: " + file);
-  }
+    verified += fs::file_size(dir / file);
+  };
+  for (const auto &file : files)
+    verify(file);
+  if (topology)
+    verify("topology.tsv");
   require(!(f >> line), "unexpected cache manifest entries");
-  return dir / "ped.tsv";
+  if (!topology)
+    return PedigreeOperator(read_table(dir / "ped.tsv"));
+  PedigreeOperator ped;
+  ped.diag.set_size(rows);
+  ped.d.set_size(rows);
+  scan_table(
+      dir / "topology.tsv",
+      [](const Ids &h) {
+        require(h == Ids{"ID", "sire_index", "dam_index", "D", "Aii"},
+                "invalid topology header");
+      },
+      [&](const Ids &r) {
+        size_t j = ped.ids.size();
+        long sire = integer(r[1], -1), dam = integer(r[2], -1);
+        require(j < rows && sire < long(j) && dam < long(j),
+                "invalid topology parent index");
+        ped.ids.push_back(r[0]);
+        ped.sire.push_back(sire);
+        ped.dam.push_back(dam);
+        ped.d[j] = number(r[3]);
+        ped.diag[j] = number(r[4]);
+        double expected = 1 - .25 * ((sire < 0 ? 0 : ped.diag[sire]) +
+                                     (dam < 0 ? 0 : ped.diag[dam]));
+        require(ped.diag[j] >= 1 && ped.diag[j] <= 2 && ped.d[j] >= 0 &&
+                    ped.d[j] == expected,
+                "invalid cached pedigree diagonal or Mendelian variance");
+      });
+  require(ped.ids.size() == rows, "incomplete topology");
+  unique_ids(ped.ids);
+  return ped;
 }
-FeatureFile load_features(const fs::path &dir, string layer) {
+FeatureFile load_features(const fs::path &dir, string layer, double cap) {
   FeatureFile f;
   f.path = dir / (layer + ".bin");
   std::ifstream shape(dir / (layer + ".shape"));
@@ -229,19 +264,28 @@ FeatureFile load_features(const fs::path &dir, string layer) {
               fs::file_size(f.path) % n == 0,
           "invalid cached dimensions");
   if (codec == "2bit") {
-    auto stats = read_table(dir / "G.stats.tsv");
-    size_t j = 0;
+    require((32. * f.columns + 160. * n) / 1048576. < cap,
+            "SNP dictionary exceeds --memory-mb");
     f.lookup.set_size(4, f.columns);
-    for (auto &row : stats.rows)
-      if (row[stats.col("keep")] == "1") {
-        require(j < f.columns, "invalid SNP dictionary");
-        double mean = number(row[stats.col("impute")]),
-               center = number(row[stats.col("center")]);
-        for (size_t k = 0; k < 4; ++k)
-          f.lookup(k, j) =
-              ((k == 3 ? mean : double(k)) - center) / std::sqrt(denom);
-        ++j;
-      }
+    size_t j = 0, keep = 0, impute = 0, center = 0;
+    scan_table(
+        dir / "G.stats.tsv",
+        [&](const Ids &h) {
+          Table header{h, {}};
+          keep = header.col("keep");
+          impute = header.col("impute");
+          center = header.col("center");
+        },
+        [&](const Ids &row) {
+          if (row[keep] == "0")
+            return;
+          require(row[keep] == "1" && j < f.columns, "invalid SNP dictionary");
+          double fill = number(row[impute]), mu = number(row[center]);
+          for (size_t k = 0; k < 4; ++k)
+            f.lookup(k, j) =
+                ((k == 3 ? fill : double(k)) - mu) / std::sqrt(denom);
+          ++j;
+        });
     require(j == f.columns, "incomplete SNP dictionary");
   }
   auto t = read_table(dir / (layer + ".ids.tsv"));
@@ -487,6 +531,12 @@ void prepare_cache(const fs::path &pedigree, const fs::path &snp,
         << (op.sire[i] < 0 ? "0" : field(op.ids[op.sire[i]])) << '\t'
         << (op.dam[i] < 0 ? "0" : field(op.ids[op.dam[i]])) << '\n';
   });
+  write_file(dir / "topology.tsv", [&](auto &f) {
+    f << "ID\tsire_index\tdam_index\tD\tAii\n";
+    for (size_t i = 0; i < op.ids.size(); ++i)
+      f << field(op.ids[i]) << '\t' << op.sire[i] << '\t' << op.dam[i] << '\t'
+        << op.d[i] << '\t' << op.diag[i] << '\n';
+  });
   pack_features(snp, dir, "G", true, false, cap, two_bit);
   pack_features(omics, dir, "O", false, fpkm, cap, false);
   write_file(dir / "sources.tsv", [&](auto &f) {
@@ -498,17 +548,16 @@ void prepare_cache(const fs::path &pedigree, const fs::path &snp,
     }
   });
   write_file(dir / "manifest", [&](auto &f) {
-    f << "fsblup-cache 2 little-endian\n";
+    f << "fsblup-cache 3 little-endian\n";
     for (auto &file : files)
       f << digest(dir / file) << ' ' << file << '\n';
+    f << digest(dir / "topology.tsv") << " topology.tsv\n";
   });
 }
 Cache::Cache(const fs::path &dir, double cap)
-    : ped(read_table(validate(dir, cap))), g(load_features(dir, "G")),
-      o(load_features(dir, "O")) {
+    : ped(load_pedigree(dir, cap, verified_bytes)),
+      g(load_features(dir, "G", cap)), o(load_features(dir, "O", cap)) {
   coverage = Layers{{ped.ids, {}}, {g.ids, {}}, {o.ids, {}}}.mode();
-  for (auto &name : files)
-    verified_bytes += fs::file_size(dir / name);
 }
 Layers Cache::materialize(double cap) {
   budget(ped.ids.size(), std::max(g.columns, o.columns), cap);
@@ -528,26 +577,75 @@ Apply subset_apply(size_t whole, uvec ix, Apply apply) {
     return y.rows(ix);
   };
 }
-Apply feature_training(const FeatureFile &f, const uvec &ix, size_t block,
-                       double cap, bool stream, bool resident, CacheIO &io) {
-  if (stream ||
-      (!resident && double(ix.n_elem) * f.columns * 8 > cap * 1048576. / 8))
-    return [&f, ix, block, &io](const mat &x) {
-      return f.apply(x, block, io, &ix);
-    };
-  auto packed = std::make_shared<mat>(f.columns, ix.n_elem);
-  std::ifstream in(f.path, std::ios::binary);
-  require(bool(in), "cannot open feature cache");
-  for (size_t j = 0; j < ix.n_elem; ++j) {
-    if (!j || ix[j] != ix[j - 1] + 1)
-      in.seekg(ix[j] * f.stride);
-    f.read(in, 1, packed->colptr(j), io);
+// The cache is row-major on disk. Coalesce runs without reordering IDs.
+mat feature_rows(const FeatureFile &f, std::ifstream &in, const uvec &ix,
+                 CacheIO &io) {
+  mat w(f.columns, ix.n_elem);
+  for (size_t j = 0; j < ix.n_elem;) {
+    size_t end = j + 1;
+    while (end < ix.n_elem && ix[end] == ix[j] + end - j)
+      ++end;
+    in.seekg(ix[j] * f.stride);
+    f.read(in, end - j, w.colptr(j), io);
+    j = end;
   }
-
-  return [packed](const mat &x) -> mat {
-    mat coefficients = (*packed) * x;
-    return packed->t() * coefficients;
+  return w;
+}
+ProductPair feature_products(const FeatureFile &f, const uvec &train,
+                             const uvec &targets, const uvec &local_train,
+                             size_t block, bool keep, CacheIO &io) {
+  std::shared_ptr<const mat> packed;
+  if (keep) {
+    std::ifstream in(f.path, std::ios::binary);
+    auto stored = std::make_shared<mat>(f.columns, train.n_elem);
+    for (size_t j = 0; j < train.n_elem; j += block) {
+      size_t end = std::min(j + block, size_t(train.n_elem)) - 1;
+      stored->cols(j, end) = feature_rows(f, in, train.subvec(j, end), io);
+    }
+    packed = std::move(stored);
+  }
+  auto blocks = [&f, block, &io](const uvec &ix, const auto &visit) {
+    std::ifstream in(f.path, std::ios::binary);
+    require(bool(in), "cannot open feature cache");
+    for (size_t i = 0; i < ix.n_elem; i += block) {
+      size_t end = std::min(i + block, size_t(ix.n_elem)) - 1;
+      visit(i, end, feature_rows(f, in, ix.subvec(i, end), io));
+    }
   };
+  auto coefficients = [packed, blocks, train,
+                       m = f.columns](const mat &v) -> mat {
+    if (packed)
+      return (*packed) * v;
+    mat z(m, v.n_cols, arma::fill::zeros);
+    blocks(train, [&](size_t i, size_t end, const mat &w) {
+      z += w * v.rows(i, end);
+    });
+    return z;
+  };
+  auto product = [packed, blocks, train](const mat &z) -> mat {
+    if (packed)
+      return packed->t() * z;
+    mat result(train.n_elem, z.n_cols);
+    blocks(train, [&](size_t i, size_t end, const mat &w) {
+      result.rows(i, end) = w.t() * z;
+    });
+    return result;
+  };
+  uvec mask(targets.n_elem, arma::fill::ones);
+  mask.elem(local_train).zeros();
+  uvec other = arma::find(mask), rows = targets.elem(other);
+  return {[coefficients, product](const mat &v) {
+            return product(coefficients(v));
+          },
+          [coefficients, product, local_train, other, rows, blocks,
+           n = targets.n_elem](const mat &v) -> mat {
+            mat z = coefficients(v), out(n, v.n_cols);
+            out.rows(local_train) = product(z);
+            blocks(rows, [&](size_t i, size_t end, const mat &w) {
+              out.rows(other.subvec(i, end)) = w.t() * z;
+            });
+            return out;
+          }};
 }
 mat columns(const Apply &apply, size_t n, const uvec &idx, size_t batch) {
   mat result(n, idx.n_elem);
@@ -568,19 +666,28 @@ void check_space(double bytes, double cap, const string &purpose) {
 }
 } // namespace
 TrainKernel PopulationKernel::restrict(const Ids &targets, const uvec &train,
-                                       double cap, double solver_mib) const {
+                                       double cap, double solver_mib,
+                                       size_t rhs_panel) const {
   cap -= retained_mib;
-  require(cap > solver_mib,
-          "training and feature workspaces exceed --memory-mb");
+  if (cap <= solver_mib)
+    throw CertificationUnavailable(
+        "training and feature workspaces exceed --memory-mb");
   uvec ix = positions(ids, targets), tr = ix.elem(train);
-  auto training = train_apply ? train_apply(tr, cap - solver_mib)
-                              : subset_apply(ids.size(), tr, apply);
-  auto cross = [fn = apply, ix, tr, n = ids.size()](const mat &x) -> mat {
-    mat z(n, x.n_cols, arma::fill::zeros);
-    z.rows(tr) = x;
-    mat res = fn(z);
-    return res.rows(ix);
-  };
+  Product training, cross;
+  if (common_products) {
+    auto pair = common_products(tr, ix, train, cap - solver_mib, rhs_panel);
+    training = std::move(pair.train);
+    cross = std::move(pair.cross);
+  } else {
+    training = train_apply ? train_apply(tr, cap - solver_mib)
+                           : subset_apply(ids.size(), tr, apply);
+    cross = [fn = apply, ix, tr, n = ids.size()](const mat &x) -> mat {
+      mat z(n, x.n_cols, arma::fill::zeros);
+      z.rows(tr) = x;
+      mat res = fn(z);
+      return res.rows(ix);
+    };
+  }
   auto dense = [training, n = train.n_elem, whole = ids.size(), cap]() -> mat {
     check_space(160. * n * n + 256. * whole, cap,
                 "exact training spectrum/direct factor; alternatively use "
@@ -637,7 +744,8 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
       if (bytes > cap * 1048576.)
         throw CertificationUnavailable(
             "signed-weight certification exceeds --memory-mb");
-      size_t batch = 1;
+      size_t batch = std::max(
+          1., std::min(32., (cap * 1048576. - bytes) / (128. * n + 64. * m)));
       size_t chunk = std::max(
           1., std::min(double(block), (cap * 1048576. - bytes) / (32. * m)));
       auto raw = [&](const mat &v) -> mat {
@@ -670,37 +778,56 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
                              z += a * op(v);
                            return z;
                          });
-    result.train_apply = [this, pa, pg, po, a, b,
-                          block](const uvec &tr, double limit) -> Apply {
-      if (resident) {
-        const double stored =
-            8. * tr.n_elem *
-            ((b != 0 ? g.columns : 0) + (a != 0 ? o.columns : 0));
-        const double temporary = 16. * block * std::max(g.columns, o.columns) +
-                                 320. * pa.n_elem +
-                                 64. * std::max(g.columns, o.columns);
-        check_space(stored + temporary, limit,
-                    "resident training features and cross workspace");
+    result.common_products = [this, pa, pg, po, a,
+                              b](const uvec &tr, const uvec &ix,
+                                 const uvec &local, double limit,
+                                 size_t rhs_panel) {
+      const size_t m = std::max(b != 0 ? g.columns : 0, a != 0 ? o.columns : 0);
+      double available = limit * 1048576.;
+      double stored = 8. * tr.n_elem *
+                      ((b != 0 ? g.columns : 0) + (a != 0 ? o.columns : 0));
+      double reserve = 8. * rhs_panel * (m + 4. * ix.n_elem) + 64. * ix.n_elem;
+      bool keep = !streaming && (resident || stored <= available / 4);
+      check_space((keep ? stored : 0) + reserve + 24. * m, limit,
+                  "training features and cross workspace");
+      size_t chunk = std::min(
+          2048., std::floor((available - reserve - (keep ? stored : 0)) /
+                            (24. * std::max(size_t(1), m))));
+      ProductPair A, G, O;
+      if (1 - a - b != 0) {
+        A.train = ped.restricted(pa.elem(tr));
+        auto ap = ped.restricted(pa.elem(ix));
+        A.cross = [ap, local, n = ix.n_elem](const mat &v) -> mat {
+          mat z(n, v.n_cols, arma::fill::zeros);
+          z.rows(local) = v;
+          return ap(z);
+        };
       }
-      Apply A, G, O;
-      if (1 - a - b != 0)
-        A = ped.restricted(pa.elem(tr));
-      if (b != 0)
-        G = feature_training(g, pg.elem(tr), block, limit, streaming, resident,
+      if (b)
+        G = feature_products(g, pg.elem(tr), pg.elem(ix), local, chunk, keep,
                              io);
-      if (a != 0)
-        O = feature_training(o, po.elem(tr), block, limit, streaming, resident,
+      if (a)
+        O = feature_products(o, po.elem(tr), po.elem(ix), local, chunk, keep,
                              io);
-      return [a, b, A, G, O](const mat &v) -> mat {
-        mat y = 1e-6 * v;
-        if (A)
-          y += (1 - a - b) * A(v);
-        if (G)
-          y += b * G(v);
-        if (O)
-          y += a * O(v);
-        return y;
+      auto combine = [a, b](const Apply &p, const Apply &g, const Apply &o,
+                            const mat &v, mat z) -> mat {
+        if (p)
+          z += (1 - a - b) * p(v);
+        if (g)
+          z += b * g(v);
+        if (o)
+          z += a * o(v);
+        return z;
       };
+      return ProductPair{
+          [combine, A, G, O](const mat &v) {
+            return combine(A.train, G.train, O.train, v, 1e-6 * v);
+          },
+          [combine, A, G, O, local, n = ix.n_elem](const mat &v) {
+            mat z(n, v.n_cols, arma::fill::zeros);
+            z.rows(local) = 1e-6 * v;
+            return combine(A.cross, G.cross, O.cross, v, std::move(z));
+          }};
     };
     return result;
   }
@@ -846,6 +973,7 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
         return v;
       },
       std::move(fusion.pd_blocks));
+  result.active_count = na;
   result.retained_mib += 8. * na * na / 1048576.;
   result.train_apply = [this, pa, ia, delta](const uvec &tr, double) -> Apply {
     auto aop = ped.restricted(pa.elem(tr));

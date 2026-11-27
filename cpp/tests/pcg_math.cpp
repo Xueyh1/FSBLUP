@@ -46,6 +46,14 @@ int main() {
           (2 * h);
       close(d.score[j], diff, 1e-9);
     }
+    {
+      FitOptions extreme;
+      extreme.initial_g = extreme.initial_e = 1e300;
+      FitAudit audit;
+      auto fit = fit_model(k, x, 1e-100 * y, t, extreme, audit);
+      close(fit.vu / 1e-200, 2., 1e-5);
+      close(fit.ve / 1e-200, 1., 1e-5);
+    }
     auto legacy = solve(k, x, y, t);
     close(legacy.vu, 2, 1e-5);
     close(legacy.ve, 1, 1e-5);

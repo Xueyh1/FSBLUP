@@ -1,0 +1,40 @@
+srun: job 31099 queued and waiting for resources
+srun: job 31099 has been allocated resources
+Internal ctest changing into directory: /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/build-pcg-tsan
+Test project /storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/build-pcg-tsan
+      Start 14: probe_replay
+      Start 13: pcg_cli
+ 1/16 Test #13: pcg_cli ..........................   Passed    1.57 sec
+      Start 15: reml_invariance
+ 2/16 Test #15: reml_invariance ..................   Passed    0.50 sec
+      Start 16: omics_scaling
+ 3/16 Test #16: omics_scaling ....................   Passed    0.40 sec
+      Start  2: numerical_cli
+ 4/16 Test #14: probe_replay .....................   Passed    3.71 sec
+      Start 10: concurrent_replay
+ 5/16 Test  #2: numerical_cli ....................   Passed    1.26 sec
+      Start  5: nearpd_cli
+ 6/16 Test  #5: nearpd_cli .......................   Passed    0.44 sec
+      Start 11: repeated_lifetime
+ 7/16 Test #10: concurrent_replay ................   Passed    1.01 sec
+      Start  8: solver_range
+ 8/16 Test #11: repeated_lifetime ................   Passed    0.64 sec
+      Start  7: output_failure
+ 9/16 Test  #8: solver_range .....................   Passed    0.26 sec
+      Start  6: nearpd_nested
+10/16 Test  #7: output_failure ...................   Passed    0.20 sec
+      Start  3: solver_shift
+11/16 Test  #3: solver_shift .....................   Passed    0.12 sec
+      Start  1: core
+12/16 Test  #6: nearpd_nested ....................   Passed    0.18 sec
+      Start 12: pcg_reml_math
+13/16 Test  #1: core .............................   Passed    0.09 sec
+      Start  9: io_limits
+14/16 Test #12: pcg_reml_math ....................   Passed    0.07 sec
+      Start  4: nearpd_core
+15/16 Test  #9: io_limits ........................   Passed    0.03 sec
+16/16 Test  #4: nearpd_core ......................   Passed    0.02 sec
+
+100% tests passed, 0 tests failed out of 16
+
+Total Test time (real) =   5.27 sec
