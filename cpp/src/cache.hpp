@@ -12,6 +12,8 @@ struct PedigreeOperator {
   std::function<mat(const mat &)> restricted(const uvec &rows) const;
 };
 struct CacheIO {
+  std::atomic<size_t> requested_rhs{0}, actual_panel{0}, planned_panel{0},
+      peak_temporary_bytes{0};
   std::atomic<uint64_t> phase_bytes[4]{};
   std::atomic<uint64_t> bytes{0}, reads{0}, read_ns{0}, decode_ns{0};
 };
@@ -30,6 +32,11 @@ using Product = std::function<mat(const mat &)>;
 struct ProductPair {
   Product train, cross;
 };
+struct PanelShape {
+  size_t rhs, rows, bytes;
+};
+PanelShape rhs_shape(size_t m, size_t n, size_t request, size_t preferred_rows,
+                     double available);
 struct FeatureWorkspace {
   size_t block;
   bool keep;
@@ -50,6 +57,8 @@ struct PopulationKernel {
                             size_t)>
       common_products;
   size_t active_count = 0;
+  string certification = "operator", fallback_reason = "";
+  double certification_mib = 0;
   TrainKernel restrict(const Ids &targets, const uvec &train, double cap,
                        double solver_mib = 0, size_t rhs_panel = 32) const;
 };

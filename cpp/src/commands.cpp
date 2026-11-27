@@ -918,7 +918,10 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
         f << "mode\tbackend\tfeature_bytes\tread_calls\tread_seconds\tdecode_"
              "seconds\tverified_cache_bytes\tstorage\ttargets\tactive_"
              "component_ids\tcalibration_bytes\ttraining_preload_"
-             "bytes\ttraining_bytes\tcross_bytes\n"
+             "bytes\ttraining_bytes\tcross_bytes\trequested_"
+             "backend\tcertification_backend\tfallback_reason\tcertification_"
+             "mib\tplanned_panel\trequested_rhs\tactual_panel\tpanel_workspace_"
+             "bytes\n"
           << mode << '\t' << (use_op ? "operator" : "dense") << '\t'
           << cache->io.bytes.load() << '\t' << cache->io.reads.load() << '\t'
           << cache->io.read_ns.load() * 1e-9 << '\t'
@@ -931,6 +934,17 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
           << (selected_operator ? selected_operator->active_count : 0);
         for (const auto &bytes : cache->io.phase_bytes)
           f << '\t' << bytes.load();
+        f << '\t' << opt.get("cache-backend", "auto") << '\t'
+          << (selected_operator ? selected_operator->certification
+                                : (use_op ? "operator" : "dense"))
+          << '\t'
+          << (selected_operator ? selected_operator->fallback_reason : "")
+          << '\t'
+          << (selected_operator ? selected_operator->certification_mib : 0)
+          << '\t' << cache->io.planned_panel.load() << '\t'
+          << cache->io.requested_rhs.load() << '\t'
+          << cache->io.actual_panel.load() << '\t'
+          << cache->io.peak_temporary_bytes.load();
         f << '\n';
       });
   };

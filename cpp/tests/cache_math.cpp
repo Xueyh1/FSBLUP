@@ -4,6 +4,14 @@ using namespace fsb;
 int main(int argc, char **argv) {
   try {
     require(argc == 4, "arguments: cache, built matrices, mode");
+    auto panel = rhs_shape(60000, 80, 60, 5, 8 * 1048576.);
+    require(panel.rhs >= 1 && panel.rhs < 60 && panel.bytes <= 8 * 1048576,
+            "panel budget");
+    try {
+      rhs_shape(60000, 80, 60, 5, 1024);
+      throw std::logic_error("oversized panel accepted");
+    } catch (const CertificationUnavailable &) {
+    }
     Cache cache(argv[1], 256);
     fs::path d = argv[2];
     Layers l{read_kernel(d / "A.tsv", 256), read_kernel(d / "G.tsv", 256),

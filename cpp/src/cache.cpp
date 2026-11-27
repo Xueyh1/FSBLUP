@@ -600,9 +600,16 @@ mat feature_rows(const FeatureFile &f, std::ifstream &in, const uvec &ix,
   }
   return w;
 }
+void record_max(std::atomic<size_t> &target, size_t value) {
+  auto old = target.load(std::memory_order_relaxed);
+  while (old < value &&
+         !target.compare_exchange_weak(old, value, std::memory_order_relaxed)) {
+  }
+}
 ProductPair feature_products(const FeatureFile &f, const uvec &train,
                              const uvec &targets, const uvec &local_train,
-                             size_t block, bool keep, CacheIO &io) {
+                             size_t block, bool keep, CacheIO &io,
+                             double available) {
   std::shared_ptr<const mat> packed;
   if (keep) {
     std::ifstream in(f.path, std::ios::binary);
@@ -613,7 +620,7 @@ ProductPair feature_products(const FeatureFile &f, const uvec &train,
     }
     packed = std::move(stored);
   }
-  auto blocks = [&f, block, &io](const uvec &ix, const auto &visit) {
+  auto blocks = [&f, &io](const uvec &ix, size_t block, const auto &visit) {
     std::ifstream in(f.path, std::ios::binary);
     require(bool(in), "cannot open feature cache");
     for (size_t i = 0; i < ix.n_elem; i += block) {
@@ -622,20 +629,20 @@ ProductPair feature_products(const FeatureFile &f, const uvec &train,
     }
   };
   auto coefficients = [packed, blocks, train,
-                       m = f.columns](const mat &v) -> mat {
+                       m = f.columns](const mat &v, size_t block) -> mat {
     if (packed)
       return (*packed) * v;
     mat z(m, v.n_cols, arma::fill::zeros);
-    blocks(train, [&](size_t i, size_t end, const mat &w) {
+    blocks(train, block, [&](size_t i, size_t end, const mat &w) {
       z += w * v.rows(i, end);
     });
     return z;
   };
-  auto product = [packed, blocks, train](const mat &z) -> mat {
+  auto product = [packed, blocks, train](const mat &z, size_t block) -> mat {
     if (packed)
       return packed->t() * z;
     mat result(train.n_elem, z.n_cols);
-    blocks(train, [&](size_t i, size_t end, const mat &w) {
+    blocks(train, block, [&](size_t i, size_t end, const mat &w) {
       result.rows(i, end) = w.t() * z;
     });
     return result;
@@ -643,18 +650,32 @@ ProductPair feature_products(const FeatureFile &f, const uvec &train,
   uvec mask(targets.n_elem, arma::fill::ones);
   mask.elem(local_train).zeros();
   uvec other = arma::find(mask), rows = targets.elem(other);
-  return {[coefficients, product](const mat &v) {
-            return product(coefficients(v));
-          },
-          [coefficients, product, local_train, other, rows, blocks,
-           n = targets.n_elem](const mat &v) -> mat {
-            mat z = coefficients(v), out(n, v.n_cols);
-            out.rows(local_train) = product(z);
-            blocks(rows, [&](size_t i, size_t end, const mat &w) {
-              out.rows(other.subvec(i, end)) = w.t() * z;
-            });
-            return out;
-          }};
+  auto multiply = [=, &io, m = f.columns,
+                   n = targets.n_elem](const mat &v, bool cross) -> mat {
+    auto shape = rhs_shape(m, n, v.n_cols, block, available);
+    record_max(io.requested_rhs, v.n_cols);
+    record_max(io.actual_panel, shape.rhs);
+    record_max(io.peak_temporary_bytes, shape.bytes);
+    mat out(cross ? n : train.n_elem, v.n_cols);
+    for (size_t j = 0; j < v.n_cols; j += shape.rhs) {
+      size_t end = std::min(j + shape.rhs, size_t(v.n_cols)) - 1;
+      mat coeff = (j == 0 && end + 1 == v.n_cols)
+                      ? coefficients(v, shape.rows)
+                      : coefficients(v.cols(j, end), shape.rows);
+      mat trained = product(coeff, shape.rows);
+      mat panel(out.colptr(j), out.n_rows, end - j + 1, false, true);
+      if (cross) {
+        panel.rows(local_train) = trained;
+        blocks(rows, shape.rows, [&](size_t i, size_t last, const mat &w) {
+          panel.rows(other.subvec(i, last)) = w.t() * coeff;
+        });
+      } else
+        panel = trained;
+    }
+    return out;
+  };
+  return {[multiply](const mat &v) { return multiply(v, false); },
+          [multiply](const mat &v) { return multiply(v, true); }};
 }
 mat columns(const Apply &apply, size_t n, const uvec &idx, size_t batch) {
   mat result(n, idx.n_elem);
@@ -674,6 +695,23 @@ void check_space(double bytes, double cap, const string &purpose) {
         " MiB; raise --memory-mb or reduce the conditioning group");
 }
 } // namespace
+PanelShape rhs_shape(size_t m, size_t n, size_t request, size_t preferred_rows,
+                     double available) {
+  // Reserve the caller's RHS, complete output, accumulated layer products
+  // and possible sliced RHS. Include two coefficient panels (GEMM scratch)
+  // and the read/decode blocks, alongside all resident training features.
+  double fixed = 64. * n + 8. * request * (5. * n);
+  double row = 24. * m, column = 16. * m + 48. * n;
+  if (available < fixed + row + column)
+    throw CertificationUnavailable(
+        "actual RHS and one feature panel exceed --memory-mb");
+  size_t width =
+      std::min(double(request), std::floor((available - fixed - row) / column));
+  size_t rows =
+      std::min(double(preferred_rows),
+               std::floor((available - fixed - width * column) / row));
+  return {width, rows, size_t(std::ceil(fixed + column * width + row * rows))};
+}
 FeatureWorkspace feature_workspace(size_t genomic, size_t omics, size_t train,
                                    size_t targets, size_t rhs, bool stream,
                                    bool resident, double available) {
@@ -781,6 +819,11 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
                   "training features and cross workspace");
       size_t chunk = plan.block;
       bool keep = plan.keep;
+      record_max(io.planned_panel, rhs_panel);
+      double available =
+          limit * 1048576. -
+          (keep ? 8. * tr.n_elem * ((b ? g.columns : 0) + (a ? o.columns : 0))
+                : 0.);
       ProductPair A, G, O;
       if (pedigree_weight != 0) {
         A.train = ped.restricted(pa.elem(tr));
@@ -793,10 +836,10 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
       }
       if (b)
         G = feature_products(g, pg.elem(tr), pg.elem(ix), local, chunk, keep,
-                             io);
+                             io, available);
       if (a)
         O = feature_products(o, po.elem(tr), po.elem(ix), local, chunk, keep,
-                             io);
+                             io, available);
       auto combine = [a, b, pedigree_weight](const Apply &p, const Apply &g,
                                              const Apply &o, const mat &v,
                                              mat z) -> mat {
@@ -867,7 +910,7 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
   }
   auto s = positions(pop, oids);
   size_t ns = s.n_elem, ng = gids.size();
-  auto dense_certificate = [&]() {
+  auto dense_certificate = [&](string reason, size_t active = 0) {
     check_space(192. * n * n + 320. * whole + 64. * m, cap,
                 "whole-kernel certification");
     auto materialize = [&](const Apply &fn, size_t count) {
@@ -881,13 +924,18 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
     PopulationKernel result{pop, k->diag(),
                             [k](const mat &v) -> mat { return *k * v; },
                             std::move(fused.pd_blocks)};
+    result.active_count = active;
+    result.certification = "dense";
+    result.fallback_reason = reason;
+    result.certification_mib =
+        (192. * n * n + 320. * whole + 64. * m) / 1048576.;
     result.retained_mib =
         (8. * n * n + 320. * whole + 128. * n + 64. * m) / 1048576.;
     return result;
   };
   if (mode_name == "B") {
     if (b < 0 || b > 1)
-      return dense_certificate();
+      return dense_certificate("B signed mixture");
     auto loading = std::make_shared<mat>(), delta = std::make_shared<mat>();
     vec joint(n, arma::fill::zeros);
     joint.elem(s).ones();
@@ -900,7 +948,7 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
       base.diag() += 1e-6;
       mat lower;
       if (!arma::chol(lower, base, "lower"))
-        return dense_certificate();
+        return dense_certificate("B conditioning Cholesky");
       mat omics = columns(op, ns, arma::regspace<uvec>(0, ns - 1),
                           std::min<size_t>(8, ns));
       double om = arma::mean(od), gm = arma::mean(base.diag());
@@ -912,7 +960,7 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
               a * (slope * omics + (om - slope * gm)) + (1 - a) * base,
           check;
       if (!arma::chol(check, replacement))
-        return dense_certificate();
+        return dense_certificate("B replacement Cholesky");
       *delta = replacement - base;
       *loading = arma::solve(arma::trimatu(lower.t()),
                              arma::solve(arma::trimatl(lower), cols.t(),
@@ -1014,7 +1062,7 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
   } catch (const std::runtime_error &ex) {
     if (string(ex.what()).find("complete-population nearPD required") !=
         string::npos)
-      return dense_certificate();
+      return dense_certificate("complete-population nearPD required", na);
     throw std::runtime_error(
         "mode C: " + string(ex.what()) +
         "; full dense MiB=" + std::to_string(160. * n * n / 1048576.) +
@@ -1039,6 +1087,9 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
       },
       std::move(fusion.pd_blocks));
   result.active_count = na;
+  result.certification = "active-component";
+  result.certification_mib =
+      (192. * na * na + 320. * whole + 128. * ng * ng) / 1048576.;
   result.retained_mib += 8. * na * na / 1048576.;
   result.train_apply = [this, pa, ia, delta](const uvec &tr, double) -> Apply {
     auto aop = ped.restricted(pa.elem(tr));
