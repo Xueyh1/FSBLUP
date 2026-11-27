@@ -385,51 +385,6 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
   for (auto i : p.ref)
     refs.push_back(p.ids[i]);
   double worker_cap = cap;
-  if (opt.get("parallel", "blas") == "weights") {
-    // Dense shared layers/conditionals, design, output reserve; each private
-    // task includes full reference K, nearPD/LAPACK/REML scratch and
-    // BLAS/thread space.
-    double n = refs.size();
-    double shared = (8. * (layers.a.values.n_elem + layers.g.values.n_elem +
-                           layers.o.values.n_elem) +
-                     64. * n * n + 24. * p.x.n_elem) /
-                        1048576. +
-                    1;
-    double per = (192. * n * n + 24. * n * p.x.n_cols) / 1048576. + 9;
-    if (cache) {
-      shared = (256. * layers.a.ids.size() + 24. * p.x.n_elem) / 1048576. + 1;
-      per = (std::max(cache->g.columns, cache->o.columns) * 16384. +
-             cache->ped.ids.size() * (256. + 64. * opts.batch) +
-             n * (8. * (2 * opts.slq_depth + p.x.n_cols) + 64. * opts.batch)) /
-                1048576. +
-            9;
-      if (opts.trace == "exact" && opts.varcomp != "fixed" ||
-          opts.solver == "direct")
-        per += 160. * n * n / 1048576.;
-    }
-    if (opts.trace == "hutchinson" || opts.preconditioner == "nystrom") {
-      double room =
-          (cache ? 256. * layers.a.ids.size() : 64. * n * n) / 1048576.;
-      per = std::max(per, room +
-                              solver_workspace(refs.size(), refs.size(),
-                                               p.x.n_cols, opts) /
-                                  1048576. +
-                              9);
-    }
-    if (cache && cache->resident)
-      per += 8. * n * (cache->g.columns + cache->o.columns) / 1048576.;
-    require(cap >= shared + per,
-            "--memory-mb insufficient for one candidate workspace");
-    int requested = std::min(15, integer(opt.get("threads", "1"), 1));
-    tm.weight_workers = static_cast<size_t>(
-        std::min(double(requested), std::floor((cap - shared) / per)));
-    worker_cap = (cap - shared) / tm.weight_workers;
-    write_file(dir / "worker_memory.tsv", [&](std::ostream &f) {
-      f << "shared_mib\tper_worker_mib\tworkers\testimated_mib\n"
-        << shared << '\t' << per << '\t' << tm.weight_workers << '\t'
-        << shared + tm.weight_workers * per << '\n';
-    });
-  }
   Layers l;
   if (cache)
     l = {{refs, {}},
@@ -476,6 +431,78 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
       summary << f.repeat << '\t' << f.fold << '\t' << f.train.n_elem << '\t'
               << f.valid.n_elem << '\t' << f.reason << '\n';
   });
+  if (opt.get("parallel", "blas") == "weights") {
+    // Dense shared layers/conditionals, design, output reserve; each private
+    // task includes full reference K, nearPD/LAPACK/REML scratch and
+    // BLAS/thread space.
+    double n = refs.size();
+    double shared = (8. * (layers.a.values.n_elem + layers.g.values.n_elem +
+                           layers.o.values.n_elem) +
+                     64. * n * n + 24. * p.x.n_elem) /
+                        1048576. +
+                    1;
+    double per = (192. * n * n + 24. * n * p.x.n_cols) / 1048576. + 9;
+    size_t ntrain = 0;
+    for (const auto &fold : folds)
+      ntrain = std::max(ntrain, size_t(fold.train.n_elem));
+    size_t panel = feature_panel(opts, ntrain);
+    double base = 0;
+    if (cache) {
+      shared = (256. * layers.a.ids.size() + 32. * cache->g.columns +
+                24. * p.x.n_elem) /
+                   1048576. +
+               1;
+      size_t m = std::max(cache->g.columns, cache->o.columns);
+      base = solver_workspace(ntrain, n, p.x.n_cols, opts) +
+             320. * layers.a.ids.size() + 128. * n + 64. * m;
+      auto min =
+          feature_workspace(cache->g.columns, cache->o.columns, ntrain, n,
+                            panel, cache->streaming, cache->resident, 0);
+      per = (base + min.minimum_bytes) / 1048576.;
+    } else if (opts.trace == "hutchinson" || opts.preconditioner == "nystrom") {
+      per = std::max(
+          per, (64. * n * n + solver_workspace(ntrain, n, p.x.n_cols, opts)) /
+                       1048576. +
+                   9);
+    }
+    require(cap >= shared + per,
+            "--memory-mb insufficient for one candidate workspace");
+    int requested = std::min(15, integer(opt.get("threads", "1"), 1));
+    tm.weight_workers = static_cast<size_t>(
+        std::min(double(requested), std::floor((cap - shared) / per)));
+    worker_cap = (cap - shared) / tm.weight_workers;
+    size_t block = 0;
+    if (cache) {
+      double condition = 0;
+      if (mode == "B")
+        condition = 96. * n * l.o.ids.size() +
+                    128. * l.o.ids.size() * l.o.ids.size() +
+                    256. * layers.a.ids.size();
+      if (mode == "C")
+        condition = 192. * n * n + 320. * layers.a.ids.size() +
+                    128. * l.g.ids.size() * l.g.ids.size();
+      if (!opt.has("strict-simplex"))
+        condition =
+            std::max(condition, 192. * n * n + 320. * layers.a.ids.size());
+      while (tm.weight_workers > 1 &&
+             worker_cap * 1048576. < condition + base) {
+        --tm.weight_workers;
+        worker_cap = (cap - shared) / tm.weight_workers;
+      }
+      auto plan = feature_workspace(cache->g.columns, cache->o.columns, ntrain,
+                                    n, panel, cache->streaming, cache->resident,
+                                    worker_cap * 1048576. - base);
+      block = plan.block;
+      per = (base + plan.planned_bytes) / 1048576.;
+    }
+    write_file(dir / "worker_memory.tsv", [&](std::ostream &f) {
+      f << "shared_mib\tper_worker_mib\tworkers\testimated_mib\tmax_train\trhs_"
+           "panel\tfeature_block_rows\n"
+        << shared << '\t' << per << '\t' << tm.weight_workers << '\t'
+        << shared + tm.weight_workers * per << '\t' << ntrain << '\t' << panel
+        << '\t' << block << '\n';
+    });
+  }
   std::optional<FusionPlan> reference;
   if (!cache)
     reference.emplace(l);

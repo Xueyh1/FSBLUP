@@ -665,6 +665,23 @@ void check_space(double bytes, double cap, const string &purpose) {
         " MiB; raise --memory-mb or reduce the conditioning group");
 }
 } // namespace
+FeatureWorkspace feature_workspace(size_t genomic, size_t omics, size_t train,
+                                   size_t targets, size_t rhs, bool stream,
+                                   bool resident, double available) {
+  size_t width = std::max(genomic, omics);
+  double stored = 8. * train * (double(genomic) + omics);
+  double fixed = 8. * rhs * (width + 4. * targets) + 64. * targets;
+  double row = 24. * width;
+  double minimum = fixed + row + (resident ? stored : 0.);
+  bool keep = resident || (!stream && stored <= available / 4 &&
+                           fixed + row + stored <= available);
+  double base = fixed + (keep ? stored : 0.);
+  size_t block = width && available >= base + row
+                     ? size_t(std::min({2048., double(targets),
+                                        std::floor((available - base) / row)}))
+                     : 1;
+  return {block, keep, minimum, base + row * block};
+}
 TrainKernel PopulationKernel::restrict(const Ids &targets, const uvec &train,
                                        double cap, double solver_mib,
                                        size_t rhs_panel) const {
@@ -782,17 +799,13 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
                               b](const uvec &tr, const uvec &ix,
                                  const uvec &local, double limit,
                                  size_t rhs_panel) {
-      const size_t m = std::max(b != 0 ? g.columns : 0, a != 0 ? o.columns : 0);
-      double available = limit * 1048576.;
-      double stored = 8. * tr.n_elem *
-                      ((b != 0 ? g.columns : 0) + (a != 0 ? o.columns : 0));
-      double reserve = 8. * rhs_panel * (m + 4. * ix.n_elem) + 64. * ix.n_elem;
-      bool keep = !streaming && (resident || stored <= available / 4);
-      check_space((keep ? stored : 0) + reserve + 24. * m, limit,
+      auto plan = feature_workspace(b ? g.columns : 0, a ? o.columns : 0,
+                                    tr.n_elem, ix.n_elem, rhs_panel, streaming,
+                                    resident, limit * 1048576.);
+      check_space(plan.planned_bytes, limit,
                   "training features and cross workspace");
-      size_t chunk = std::min(
-          2048., std::floor((available - reserve - (keep ? stored : 0)) /
-                            (24. * std::max(size_t(1), m))));
+      size_t chunk = plan.block;
+      bool keep = plan.keep;
       ProductPair A, G, O;
       if (1 - a - b != 0) {
         A.train = ped.restricted(pa.elem(tr));

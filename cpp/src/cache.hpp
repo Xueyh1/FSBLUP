@@ -29,6 +29,14 @@ using Product = std::function<mat(const mat &)>;
 struct ProductPair {
   Product train, cross;
 };
+struct FeatureWorkspace {
+  size_t block;
+  bool keep;
+  double minimum_bytes, planned_bytes;
+};
+FeatureWorkspace feature_workspace(size_t genomic, size_t omics, size_t train,
+                                   size_t targets, size_t rhs, bool stream,
+                                   bool resident, double available_bytes);
 struct PopulationKernel {
   Ids ids;
   vec diagonal;
