@@ -19,8 +19,8 @@ with tempfile.TemporaryDirectory() as tmp:
         w = csv.DictWriter(f, values[0], delimiter="\t")
         w.writeheader()
         w.writerows(values)
-    for policy,workers in (("legacy",1),("legacy",2),("rounds",1),("rounds",2)):
-        dest = root / (policy+str(workers))
+    for policy, workers in (("legacy", 1), ("legacy", 2), ("rounds", 1), ("rounds", 2)):
+        dest = root / (policy + str(workers))
         args = [
             sys.argv[1],
             "fit",
@@ -46,7 +46,9 @@ with tempfile.TemporaryDirectory() as tmp:
             "2",
             "--mc-tol",
             "1e-12",
-            "--retry-policy",policy,"--retry-probes",
+            "--retry-policy",
+            policy,
+            "--retry-probes",
             "12",
             "--parallel",
             "weights",
@@ -64,10 +66,18 @@ with tempfile.TemporaryDirectory() as tmp:
             and int(t["retry_reserved"]) == 12
         ), t
         assert int(t["folds_completed"]) == 0
-        assert int(t["fold_attempts"])==(17 if policy=="legacy" else 18) and int(t["folds_scored_last_attempt"])==0
+        assert (
+            int(t["fold_attempts"]) == (17 if policy == "legacy" else 18)
+            and int(t["folds_scored_last_attempt"]) == 0
+        )
         s = rows(dest / "search.tsv")
         assert (
-            (int(s[0]["retry_reserved_probes"]) == 12 and "8:" in s[0]["probe_attempts"]) if policy=="legacy" else all(r["retry_reserved_probes"]=="4" for r in s[:3])
+            (
+                int(s[0]["retry_reserved_probes"]) == 12
+                and "8:" in s[0]["probe_attempts"]
+            )
+            if policy == "legacy"
+            else all(r["retry_reserved_probes"] == "4" for r in s[:3])
         )
         if workers == 1:
             first = s

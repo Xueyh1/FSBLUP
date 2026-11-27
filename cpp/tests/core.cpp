@@ -177,6 +177,42 @@ int main(int argc, char **argv) {
     require(evaluate_weight(plan, .2, .5, x, y, y, {}, "rmse").reason ==
                 "no validation folds",
             "empty folds should produce an ineligible candidate");
+    {
+      // Both points already scored fold 1. Each remaining fold gets one
+      // four-probe reservation in the first round.
+      std::vector<Weight> points = {{0, 0}, {.25, .25}};
+      std::vector<Evaluation> ev(2);
+      std::vector<Fold> folds = {{1, 1, {0}, {1}, ""}, {1, 2, {1}, {0}, ""}};
+      FitOptions opt;
+      opt.trace = "hutchinson";
+      opt.max_probes = 2;
+      for (auto &e : ev) {
+        e.scores = {1., NAN};
+        e.probe_exhausted = true;
+        e.reason = "exhausted";
+        e.fold_attempts = 2;
+        e.successful_fold_fits = 1;
+      }
+      size_t budget = 8;
+      retry_batch(points, ev, folds, opt, budget, false,
+                  [](double, double, const FitOptions &next,
+                     const std::vector<Fold> &pending) {
+                    require(pending.size() == 1 && pending[0].fold == 2 &&
+                                next.max_probes == 4,
+                            "retry fold reuse");
+                    Evaluation e;
+                    e.scores = {3.};
+                    e.value = 3;
+                    e.fold_attempts = e.successful_fold_fits = 1;
+                    e.fits.emplace_back().probes = 3;
+                    return e;
+                  });
+      require(!budget, "round reservation");
+      for (const auto &e : ev)
+        require(e.value == 2 && e.retry_spent == 4 && e.retry_used == 3 &&
+                    e.fold_attempts == 3 && e.successful_fold_fits == 2,
+                "retry accounting");
+    }
     auto search_result = search(false, true, [](double a, double b) {
       Evaluation e;
       e.value = (a - .375) * (a - .375) + (b - .375) * (b - .375);
