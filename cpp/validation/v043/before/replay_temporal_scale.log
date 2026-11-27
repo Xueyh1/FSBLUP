@@ -1,0 +1,12 @@
+direct common points 19 max common score difference 0.0
+pcg common points 19 max common score difference 0.0
+solver	training_only_score	score_scale	visited	selected_alpha	selected_beta	RMSE	scorable_folds
+direct	0.0	0.087509615108275401	31	0.34375	0.34375	5.3220965678399558e-17	1
+pcg	0.0	0.087509615108275401	31	0.34375	0.34375	4.6931580949310353e-13	1
+direct	400.0	309.83868005452894	19	0.375	0.375	0.012544485945778647	1
+pcg	400.0	309.83868005452894	19	0.375	0.375	0.012544485945457826	1
+Single-class AUC exit 1
+scorable_folds_per_point 0
+fold_attempts 0
+candidates_visited 15
+invalid_kernel 15

@@ -431,17 +431,22 @@ struct FaceCheck {
   double g = 0, e = 0, gain = -INFINITY;
   bool unresolved = false;
 };
-FaceCheck compare_face(ProbeSet &p, const mat &x, const vec &y,
-                       const vec &face_lik, double scale, double km,
-                       size_t count, int it, double design_logdet,
-                       double face_depth = 0) {
+FaceCheck compare_candidates(ProbeSet &p, const mat &x, const vec &y,
+                             const vec &face_lik, double scale, double km,
+                             size_t count, int it, double design_logdet,
+                             double face_depth = 0,
+                             double incumbent_ratio = 0) {
   FaceCheck best;
   double df = x.n_rows - x.n_cols;
+  struct Sample {
+    double ratio, g, e, gain, error, depth;
+  };
+  std::vector<Sample> samples;
   for (int j = -8; j <= 8; ++j) {
     double ratio = std::exp2(j * 1.5) * km;
     double g = scale / (km + ratio), e = ratio * g;
     auto before = p.audit.matvec;
-    auto state = evaluate(p, x, y, g, e, count, false, true);
+    auto state = evaluate(p, x, y, g, e, count, false, !incumbent_ratio);
     double factor = state.ypy / df;
     require(factor > 0 && std::isfinite(factor),
             "invalid profiled stochastic scale");
@@ -456,15 +461,32 @@ FaceCheck compare_face(ProbeSet &p, const mat &x, const vec &y,
                    64 * arma::datum::eps * (1 + std::abs(arma::mean(lik)));
     auto &step = p.audit.steps.emplace_back(
         Iteration{it, 0, g, e, arma::mean(lik), NAN, NAN, 0, 0,
-                  "face-challenger", count, se, state.depth});
+                  incumbent_ratio ? "interior-challenger" : "face-challenger",
+                  count, se, state.depth});
     step.face_gain = gain;
     step.face_matvec = p.audit.matvec - before;
-    if (gain > error && state.depth <= p.o.slq_tol && gain > best.gain) {
-      best.g = g;
-      best.e = e;
-      best.gain = gain;
+    samples.push_back({ratio, g, e, gain, error, state.depth});
+  }
+  // Insert the incumbent itself so a grid node in its basin is not
+  // mistaken for an independent maximum when the paired SE is nonzero.
+  if (incumbent_ratio) {
+    samples.push_back({incumbent_ratio, 0, 0, 0, 0, 0});
+    std::stable_sort(
+        samples.begin(), samples.end(),
+        [](const Sample &a, const Sample &b) { return a.ratio < b.ratio; });
+  }
+  for (size_t i = 0; i < samples.size(); ++i) {
+    const auto &v = samples[i];
+    if (incumbent_ratio &&
+        (v.g == 0 || (i && samples[i - 1].gain >= v.gain) ||
+         (i + 1 < samples.size() && samples[i + 1].gain >= v.gain)))
+      continue;
+    if (v.gain > v.error && v.depth <= p.o.slq_tol && v.gain > best.gain) {
+      best.g = v.g;
+      best.e = v.e;
+      best.gain = v.gain;
     }
-    if (gain + error >= 0 || state.depth > p.o.slq_tol)
+    if (v.gain + v.error >= 0 || (!incumbent_ratio && v.depth > p.o.slq_tol))
       best.unresolved = true;
   }
   return best;
@@ -493,35 +515,37 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
   double zero_score = .5 * (arma::dot(residual, ky) / (scale * scale) -
                             (probes.traceK - arma::accu(qx % kq)) / scale);
   double zero_lik = -.5 * df * (std::log(scale) + 1);
-  // Confirm a scalar kernel columnwise for small ambiguous models.
-  // A finite set of random directions alone cannot certify identifiability.
-  double flat_tol = 1e-12 * std::max(1., km);
-  if (arma::abs(k.diagonal - km).max() <= flat_tol &&
-      arma::norm(ky - km * residual) <= flat_tol * arma::norm(residual)) {
-    if (x.n_rows <= 64) {
-      bool scalar = true;
-      for (size_t j = 0; j < x.n_rows && scalar; ++j) {
-        vec unit(x.n_rows, arma::fill::zeros);
-        unit[j] = 1;
-        scalar = arma::norm(k.apply(unit) - km * unit) <=
-                 flat_tol / std::sqrt(double(x.n_rows));
-        ++a.matvec;
-      }
-      if (scalar) {
-        double part = scale / (km + 1);
-        a.steps.push_back(
-            {0, 0, part, part, zero_lik, 0, 0, 0, 0, "unidentifiable"});
-        return {part, part, zero_lik, "unidentifiable;lambda=1"};
-      }
-    } else {
-      probes.ensure(count);
-      bool flat = true;
-      for (const auto &rule : probes.rules)
-        flat &= arma::abs(rule.second.nodes - km).max() <= flat_tol;
-      require(!flat, "stochastic precision insufficient: kernel "
-                     "indistinguishable from scalar identity");
+  // The identifiable kernel is the compression to the orthogonal
+  // complement of X. The trace supplies its only possible scalar value.
+  double scalar = (probes.traceK - arma::accu(qx % kq)) / df;
+  auto deviation = [&](const vec &v, const vec &kv) -> vec {
+    vec projected = kv - kq * (qx.t() * v) - scalar * v;
+    return projected - qx * (qx.t() * projected);
+  };
+  double tol = 1e-12 * std::max(1., std::abs(scalar));
+  if (arma::norm(deviation(residual, ky)) <= tol * arma::norm(residual)) {
+    double squared = 0;
+    size_t width = x.n_rows <= 64 ? x.n_rows : 4;
+    for (size_t i = 0; i < width && squared <= tol * tol; ++i) {
+      vec v(x.n_rows, arma::fill::zeros);
+      if (x.n_rows <= 64)
+        v[i] = 1;
+      else
+        v = probes.probe(i) / std::sqrt(double(x.n_rows));
+      vec diff = deviation(v, k.apply(v));
+      ++a.matvec;
+      squared += arma::dot(diff, diff);
+    }
+    if (squared <= tol * tol) {
+      require(x.n_rows <= 64, "stochastic precision insufficient: contrast "
+                              "kernel indistinguishable from scalar identity");
+      double part = scale / (1 + scalar);
+      a.steps.push_back(
+          {0, 0, part, part, zero_lik, 0, 0, 0, 0, "unidentifiable"});
+      return {part, part, zero_lik, "unidentifiable;lambda=1"};
     }
   }
+  unsigned interior_restarts = 0;
   bool restarted = false;
   int it = 0;
   while (it <= o.max_reml) {
@@ -540,8 +564,8 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
     const bool zero_kkt = zero_score * units[0] / df < -o.score_tol;
     if (zero_kkt && cur.score[0] < 0 && zero_lik >= lik && !restarted) {
       vec face_lik(count, arma::fill::value(zero_lik));
-      auto best = compare_face(probes, x, y, face_lik, scale, km, count, it,
-                               design_logdet);
+      auto best = compare_candidates(probes, x, y, face_lik, scale, km, count,
+                                     it, design_logdet);
       if (std::isfinite(best.gain)) {
         a.steps.push_back({it, 0, best.g, best.e, zero_lik + best.gain, NAN,
                            NAN, 0, 0, "interior-restart", count});
@@ -660,8 +684,8 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
       }
       if (boundary_g || boundary_e) {
         auto best =
-            compare_face(probes, x, y, cur.lik + .5 * design_logdet, scale, km,
-                         count, it, design_logdet, cur.depth);
+            compare_candidates(probes, x, y, cur.lik + .5 * design_logdet,
+                               scale, km, count, it, design_logdet, cur.depth);
         if (std::isfinite(best.gain) && !restarted) {
           g = best.g;
           e = best.e;
@@ -672,6 +696,27 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
           more();
           continue;
         }
+      }
+      if (!boundary_g && !boundary_e) {
+        auto rival = compare_candidates(
+            probes, x, y, cur.lik + .5 * design_logdet, scale, km, count, it,
+            design_logdet, cur.depth, e / g);
+        if (std::isfinite(rival.gain)) {
+          require(interior_restarts < 2, "stochastic precision insufficient: "
+                                         "interior restart budget exhausted");
+          ++interior_restarts;
+          a.steps.push_back({it, 0, rival.g, rival.e, lik + rival.gain, NAN,
+                             NAN, 0, 0, "higher-interior-restart", count});
+          g = rival.g;
+          e = rival.e;
+          continue;
+        }
+        if (rival.unresolved) {
+          more();
+          continue;
+        }
+        a.steps.push_back({it, 0, g, e, lik, cur.score[0], cur.score[1], 0, 0,
+                           "compared-interiors", count});
       }
       string status = boundary_g   ? "approx-genetic-zero"
                       : boundary_e ? "approx-residual-floor"
