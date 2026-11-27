@@ -13,3 +13,10 @@ Core(s) per socket:                      16
 Socket(s):                               2
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 OpenBLAS 0.3.29 DYNAMIC_ARCH NO_AFFINITY SkylakeX MAX_THREADS=128
+initial_git_status = ## cpp/standalone...origin/cpp (clean)
+initial_remote_refs/heads/cpp = 80a56ba6ad025d6dbdcd638b6efc6acae63b3851
+work_branch = dev/0.4.2
+review_covariance_fixture = fixed 8 rows
+review_cv_units_seed = 178
+review_stream_and_coverage_seed = 174
+medium_feature_generator_seed = 274
