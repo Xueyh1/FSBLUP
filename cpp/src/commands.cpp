@@ -374,7 +374,8 @@ Labels labels_from_file(const fs::path &path, const Ids &ids, bool &temporal) {
 struct Tuning {
   Search search;
   Ids fold_columns;
-  string metric, coverage, domain;
+  string metric, coverage, domain, score_policy;
+  ScoreRule rule;
 };
 Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
             const Layers &layers, const fs::path &dir, PdPolicy policy,
@@ -486,8 +487,10 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
       double(opts.log_every), std::ceil(55. * folds.size() * opts.max_reml *
                                         sizeof(Iteration) / trace_budget));
   fold_options.memory_mb = worker_cap;
+  string score_policy = opt.get("score-policy", "relative");
+  auto rule = scoring_rule(metric, truth, y, score_policy);
   auto result = search(
-      opt.has("strict-simplex"), metric == "rmse",
+      opt.has("strict-simplex"), rule,
       [&](double a, double b) {
         if (cache) {
           Evaluation ev;
@@ -540,8 +543,13 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
   for (const auto &f : folds)
     columns.push_back("r" + std::to_string(f.repeat) + "f" +
                       std::to_string(f.fold));
-  return {std::move(result), std::move(columns), metric, l.counts(),
-          opt.has("strict-simplex") ? "simplex" : "historical"};
+  return {std::move(result),
+          std::move(columns),
+          metric,
+          l.counts(),
+          opt.has("strict-simplex") ? "simplex" : "historical",
+          score_policy,
+          rule};
 }
 // Validate complete-cohort covariance in CV score order. Candidate phenotypes
 // never enter this check; the common case constructs just one full kernel.
@@ -568,9 +576,7 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
       const auto &e = trials[i].result;
       if (!e.reason.empty() || !std::isfinite(e.value) || !rejected[i].empty())
         continue;
-      if (next == count ||
-          (t.metric == "rmse" ? e.value < trials[next].result.value - 1e-12
-                              : e.value > trials[next].result.value + 1e-12))
+      if (next == count || t.rule.better(e.value, trials[next].result.value))
         next = i;
     }
     if (next == count)
@@ -650,13 +656,15 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
     f << "metric\tselection_score\tstop\tcoverage\treference_best_alpha"
          "\treference_best_beta\treference_best_score\tselected_"
          "alpha\tselected_beta"
-         "\tfull_rejections\trequested_domain\tbackend\tsearch_coverage\n"
+         "\tfull_rejections\trequested_domain\tbackend\tsearch_coverage\tscore_"
+         "policy\tscore_scale\tcomparison_tie\tcomparison_stop\n"
       << t.metric << '\t' << trials[selected].result.value << '\t'
       << result.stop << '\t' << field(t.coverage) << '\t' << result.alpha
       << '\t' << result.beta << '\t' << result.best << '\t' << alpha << '\t'
       << beta << '\t' << failures << '\t' << t.domain << '\t'
       << (cache ? "operator" : "dense") << '\t'
-      << (partial ? "partial" : "complete") << '\n';
+      << (partial ? "partial" : "complete") << '\t' << t.score_policy << '\t'
+      << t.rule.scale << "\t1e-12\t1e-4\n";
   });
   return kernel;
 }

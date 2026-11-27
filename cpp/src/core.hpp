@@ -160,7 +160,16 @@ struct Search {
   double alpha = 0, beta = 0, best = NAN;
   string stop;
 };
-Search search(bool strict, bool minimize,
+struct ScoreRule {
+  bool minimize;
+  double scale;
+  ScoreRule(bool minimum, double units = 1) : minimize(minimum), scale(units) {}
+  bool better(double candidate, double best) const;
+  bool stopped(double before, double after) const;
+};
+ScoreRule scoring_rule(const string &metric, const vec &truth,
+                       const vec &response, const string &policy);
+Search search(bool strict, ScoreRule rule,
               const std::function<Evaluation(double, double)> &evaluate,
               size_t workers = 1);
 } // namespace fsb

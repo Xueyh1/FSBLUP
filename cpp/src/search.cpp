@@ -66,8 +66,14 @@ double score(const vec &truth, const vec &pred, const string &metric) {
           "invalid score vectors");
   auto reason = invalid_truth(truth, metric);
   require(reason.empty(), reason);
-  if (metric == "rmse")
-    return std::sqrt(arma::mean(arma::square(truth - pred)));
+  if (metric == "rmse") {
+    long double sum = 0;
+    for (size_t j = 0; j < truth.n_elem; ++j) {
+      long double d = static_cast<long double>(truth[j]) - pred[j];
+      sum += d * d;
+    }
+    return std::sqrt(sum / truth.n_elem);
+  }
   if (metric == "cor") {
     vec a = truth - arma::mean(truth), b = pred - arma::mean(pred);
     double d = arma::norm(a) * arma::norm(b);
@@ -104,7 +110,7 @@ void assess_folds(Evaluation &e, const std::vector<Fold> &folds,
                   const std::function<Model(const Fold &, FitAudit &)> &fit) {
   e.scores.resize(folds.size(), NAN);
   require(!folds.empty(), "no validation folds");
-  double sum = 0;
+  long double sum = 0;
   size_t count = 0;
   for (size_t j = 0; j < folds.size(); ++j) {
     const auto &f = folds[j];
@@ -161,7 +167,30 @@ Evaluation evaluate_weight(const FusionPlan &plan, double a, double b,
   }
   return e;
 }
-Search search(bool strict, bool minimize,
+bool ScoreRule::better(double candidate, double best) const {
+  const long double delta = static_cast<long double>(candidate) - best;
+  return (minimize ? -delta : delta) > 1e-12L * scale;
+}
+bool ScoreRule::stopped(double before, double after) const {
+  return std::abs(static_cast<long double>(before) - after) < 1e-4L * scale;
+}
+ScoreRule scoring_rule(const string &metric, const vec &truth,
+                       const vec &response, const string &policy) {
+  require(policy == "relative" || policy == "legacy", "unknown score policy");
+  if (metric != "rmse" || policy == "legacy")
+    return {metric == "rmse", 1};
+  auto rms = [](const vec &v) -> double {
+    long double total = 0;
+    for (double x : v)
+      total += static_cast<long double>(x) * x;
+    return std::sqrt(total / v.n_elem);
+  };
+  double scale = rms(truth);
+  if (!scale)
+    scale = rms(response);
+  return {true, scale > 0 ? scale : 1};
+}
+Search search(bool strict, ScoreRule rule,
               const std::function<Evaluation(double, double)> &evaluate,
               size_t workers) {
   require(workers > 0, "invalid worker count");
@@ -197,8 +226,7 @@ Search search(bool strict, bool minimize,
       auto &e = results[i];
       double v = e.value;
       if (e.reason.empty() && std::isfinite(v) &&
-          (!std::isfinite(out.best) ||
-           (minimize ? v < out.best - 1e-12 : v > out.best + 1e-12))) {
+          (!std::isfinite(out.best) || rule.better(v, out.best))) {
         out.alpha = a;
         out.beta = b;
         out.best = v;
@@ -227,7 +255,7 @@ Search search(bool strict, bool minimize,
         enqueue(x, y);
       }
     run_batch("refine" + std::to_string(r));
-    if (std::abs(old - out.best) < 1e-4) {
+    if (rule.stopped(old, out.best)) {
       out.stop = "improvement < 1e-4";
       break;
     }

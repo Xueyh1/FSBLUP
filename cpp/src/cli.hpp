@@ -40,7 +40,7 @@ struct Options {
                         "preconditioner", "max-backtracks", "reml-maxiter",
                         "reml-tol",       "init-vu",        "init-ve",
                         "parallel",       "covar",          "factor",
-                        "strict-simplex", "write-k"});
+                        "strict-simplex", "score-policy",   "write-k"});
       else
         require(cmd == "fuse", "unknown subcommand: " + cmd);
     }
