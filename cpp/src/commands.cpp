@@ -585,6 +585,8 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
       next_options.max_probes = ceiling;
       auto next = evaluate(a, b, next_options);
       next.retry_spent = ev.retry_spent + cost;
+      next.fold_attempts += ev.fold_attempts;
+      next.successful_fold_fits += ev.successful_fold_fits;
       next.fold_seconds += ev.fold_seconds;
       next.timing.add(ev.timing);
       ev.fits.insert(ev.fits.end(), std::make_move_iterator(next.fits.begin()),
@@ -693,7 +695,8 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
         << "\treference_best\tfull_status\tfull_reason\tpd_policy\tnearpd_"
            "blocks\tmax_relative_normF\tfull_nearpd_blocks\tfull_max_relative_"
            "normF\trequested_domain\tbackend\tcandidate_status\tsearch_"
-           "coverage\tprobe_attempts\tretry_reserved_probes\tfolds_completed\n";
+           "coverage\tprobe_attempts\tretry_reserved_probes\tfolds_scored_last_"
+           "attempt\tfold_attempts\tfolds_completed\n";
     for (size_t i = 0; i < count; ++i) {
       const auto &v = trials[i];
       const auto &e = v.result;
@@ -726,11 +729,13 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
             << '\t' << e.retry_spent << '\t'
             << std::count_if(e.scores.begin(), e.scores.end(),
                              [](double x) { return std::isfinite(x); })
+            << '\t' << e.fold_attempts << '\t' << e.successful_fold_fits
             << '\n';
     }
   });
   size_t scored = 0, completed = 0, probe_failed = 0, numerical = 0,
-         invalid = 0, unavailable = 0, spent = 0;
+         invalid = 0, unavailable = 0, spent = 0, attempted = 0,
+         physical_completed = 0;
   for (const auto &v : trials) {
     const auto &e = v.result;
     scored += e.reason.empty() && std::isfinite(e.value);
@@ -742,6 +747,8 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
     invalid += e.outcome == "invalid";
     unavailable += e.outcome == "uncertified";
     spent += e.retry_spent;
+    attempted += e.fold_attempts;
+    physical_completed += e.successful_fold_fits;
   }
   write_file(dir / "tuning.tsv", [&](std::ostream &f) {
     f << "metric\tselection_score\tstop\tcoverage\treference_best_alpha"
@@ -751,7 +758,8 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
          "policy\tscore_scale\tcomparison_tie\tcomparison_stop\tpd_"
          "coverage\tcandidates_visited\tcandidates_scored\tscorable_folds_per_"
          "point\tfolds_completed\tprobe_exhausted\tnumerical_failures\tinvalid_"
-         "kernel\tuncertified\tretry_budget\tretry_reserved\n"
+         "kernel\tuncertified\tretry_budget\tretry_reserved\tfolds_scored_last_"
+         "attempt\tfold_attempts\tfull_invalid\tfull_uncertified\n"
       << t.metric << '\t'
       << (selected < count ? trials[selected].result.value : NAN) << '\t'
       << result.stop << '\t' << field(t.coverage) << '\t' << result.alpha
@@ -762,8 +770,11 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
       << (partial ? "partial" : "complete") << '\t' << t.score_policy << '\t'
       << t.rule.scale << "\t1e-12\t1e-4\t" << (partial ? "partial" : "complete")
       << '\t' << count << '\t' << scored << '\t' << t.scorable << '\t'
-      << completed << '\t' << probe_failed << '\t' << numerical << '\t'
+      << physical_completed << '\t' << probe_failed << '\t' << numerical << '\t'
       << invalid << '\t' << unavailable << '\t' << t.budget << '\t' << spent
+      << '\t' << completed << '\t' << attempted << '\t'
+      << failures - std::count(uncertified.begin(), uncertified.end(), true)
+      << '\t' << std::count(uncertified.begin(), uncertified.end(), true)
       << '\n';
   });
   if (!std::isfinite(result.best))
@@ -887,6 +898,28 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
   std::optional<PopulationKernel> selected_operator;
   Phenotype p;
   FitOptions opts;
+  auto save_usage = [&] {
+    if (cache)
+      write_file(dir / "cache_usage.tsv", [&](auto &f) {
+        f << "mode\tbackend\tfeature_bytes\tread_calls\tread_seconds\tdecode_"
+             "seconds\tverified_cache_bytes\tstorage\ttargets\tactive_"
+             "component_ids\tcalibration_bytes\ttraining_preload_"
+             "bytes\ttraining_bytes\tcross_bytes\n"
+          << mode << '\t' << (use_op ? "operator" : "dense") << '\t'
+          << cache->io.bytes.load() << '\t' << cache->io.reads.load() << '\t'
+          << cache->io.read_ns.load() * 1e-9 << '\t'
+          << cache->io.decode_ns.load() * 1e-9 << '\t' << cache->verified_bytes
+          << '\t'
+          << (cache->streaming  ? "stream"
+              : cache->resident ? "resident"
+                                : "auto")
+          << '\t' << p.ids.size() << '\t'
+          << (selected_operator ? selected_operator->active_count : 0);
+        for (const auto &bytes : cache->io.phase_bytes)
+          f << '\t' << bytes.load();
+        f << '\n';
+      });
+  };
   if (cmd == "fit") {
     opts = fit_options(opt, tm);
     require(!opt.has("retry-probes") || (!fixed && opts.trace == "hutchinson"),
@@ -905,12 +938,17 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
     positions(l.a.ids, p.ids);
     tm.mark("read_phenotype");
     if (!fixed) {
-      const auto tuning = tune(opt, t, p, l, dir, policy, cap, tm, opts,
-                               use_op ? &*cache : nullptr);
-      tm.mark("search");
-      k = select_fusion(tuning, l, dir, a, b, policy,
-                        use_op ? &*cache : nullptr, selected_operator, cap,
-                        opts);
+      try {
+        const auto tuning = tune(opt, t, p, l, dir, policy, cap, tm, opts,
+                                 use_op ? &*cache : nullptr);
+        tm.mark("search");
+        k = select_fusion(tuning, l, dir, a, b, policy,
+                          use_op ? &*cache : nullptr, selected_operator, cap,
+                          opts);
+      } catch (const TuningFailure &) {
+        save_usage();
+        throw;
+      }
     }
   } else
     require(fixed, "fuse requires alpha and beta");
@@ -978,31 +1016,12 @@ void run(const string &cmd, const Options &opt, const fs::path &dir, double cap,
     } catch (const std::runtime_error &error) {
       if (fixed && audit.steps.empty() && audit.rhs == 0)
         throw;
+      save_usage();
       audit.status = error.what();
       write_audits(dir, {audit}, opts, "");
       throw TuningFailure("final fit failed: " + audit.status);
     }
-    if (cache)
-      write_file(dir / "cache_usage.tsv", [&](auto &f) {
-        f << "mode\tbackend\tfeature_bytes\tread_calls\tread_seconds\tdecode_"
-             "seconds\tverified_cache_bytes\tstorage\ttargets\tactive_"
-             "component_ids\tcalibration_bytes\ttraining_preload_"
-             "bytes\ttraining_bytes\tcross_bytes\n"
-          << mode << '\t' << (use_op ? "operator" : "dense") << '\t'
-          << cache->io.bytes.load() << '\t' << cache->io.reads.load() << '\t'
-          << cache->io.read_ns.load() * 1e-9 << '\t'
-          << cache->io.decode_ns.load() * 1e-9 << '\t' << cache->verified_bytes
-          << '\t'
-          << (cache->streaming  ? "stream"
-              : cache->resident ? "resident"
-                                : "auto")
-          << '\t' << p.ids.size() << '\t'
-          << (use_op ? selected_operator->active_count : 0);
-        for (const auto &bytes : cache->io.phase_bytes)
-          f << '\t' << bytes.load();
-        f << '\n';
-      });
-
+    save_usage();
     tm.mark("final_reml_blup");
     if (tm.log && tm.log->info_enabled())
       tm.log->info("stage=model alpha=" + std::to_string(a) +

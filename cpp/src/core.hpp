@@ -137,6 +137,7 @@ struct Evaluation {
   std::vector<double> scores;
   std::vector<FitAudit> fits;
   size_t probe_limit = 0, retry_spent = 0;
+  size_t fold_attempts = 0, successful_fold_fits = 0;
   string attempts;
   double fold_seconds = 0;
   PdTimes timing;

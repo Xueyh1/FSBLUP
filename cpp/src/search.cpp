@@ -136,6 +136,7 @@ void assess_folds(Evaluation &e, const std::vector<Fold> &folds,
     const auto &f = folds[j];
     if (!f.reason.empty())
       continue;
+    ++e.fold_attempts;
     auto &audit = e.fits.emplace_back();
     audit.context = "alpha=" + std::to_string(a) +
                     " beta=" + std::to_string(b) +
@@ -160,6 +161,7 @@ void assess_folds(Evaluation &e, const std::vector<Fold> &folds,
             .count();
     if (!e.reason.empty())
       return;
+    ++e.successful_fold_fits;
     sum += e.scores[j];
     ++count;
   }
