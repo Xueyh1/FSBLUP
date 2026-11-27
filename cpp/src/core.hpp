@@ -136,6 +136,8 @@ struct Evaluation {
   string reason, correction, outcome = "evaluated";
   std::vector<double> scores;
   std::vector<FitAudit> fits;
+  size_t probe_limit = 0, retry_spent = 0;
+  string attempts;
   double fold_seconds = 0;
   PdTimes timing;
   size_t nearpd_blocks = 0;
@@ -169,7 +171,9 @@ struct ScoreRule {
 };
 ScoreRule scoring_rule(const string &metric, const vec &truth,
                        const vec &response, const string &policy);
-Search search(bool strict, ScoreRule rule,
-              const std::function<Evaluation(double, double)> &evaluate,
-              size_t workers = 1);
+Search
+search(bool strict, ScoreRule rule,
+       const std::function<Evaluation(double, double)> &evaluate,
+       size_t workers = 1,
+       const std::function<void(double, double, Evaluation &)> &retry = {});
 } // namespace fsb

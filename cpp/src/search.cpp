@@ -192,7 +192,8 @@ ScoreRule scoring_rule(const string &metric, const vec &truth,
 }
 Search search(bool strict, ScoreRule rule,
               const std::function<Evaluation(double, double)> &evaluate,
-              size_t workers) {
+              size_t workers,
+              const std::function<void(double, double, Evaluation &)> &retry) {
   require(workers > 0, "invalid worker count");
   Search out;
   using Point = std::pair<double, double>;
@@ -224,6 +225,8 @@ Search search(bool strict, ScoreRule rule,
     for (size_t i = 0; i < batch.size(); ++i) {
       auto [a, b] = batch[i];
       auto &e = results[i];
+      if (retry)
+        retry(a, b, e);
       double v = e.value;
       if (e.reason.empty() && std::isfinite(v) &&
           (!std::isfinite(out.best) || rule.better(v, out.best))) {
