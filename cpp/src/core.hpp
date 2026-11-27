@@ -140,7 +140,8 @@ struct Evaluation {
   string reason, correction, outcome = "evaluated";
   std::vector<double> scores;
   std::vector<FitAudit> fits;
-  size_t probe_limit = 0, retry_spent = 0;
+  size_t probe_limit = 0, retry_spent = 0, retry_used = 0, discarded_probes = 0,
+         kept_probes = 0;
   size_t fold_attempts = 0, successful_fold_fits = 0;
   string attempts;
   double fold_seconds = 0;
@@ -178,10 +179,16 @@ ScoreRule scoring_rule(const string &metric, const vec &truth,
                        const vec &response, const string &policy);
 ScoreRule validation_rule(const string &, const vec &, const vec &,
                           const string &, const std::vector<Fold> &);
-Search
-search(bool strict, ScoreRule rule,
-       const std::function<Evaluation(double, double)> &evaluate,
-       size_t workers = 1,
-       const std::function<void(double, double, Evaluation &)> &retry = {},
-       const string &policy = "neighborhood");
+using Weight = std::pair<double, double>;
+using RetryBatch =
+    std::function<void(const std::vector<Weight> &, std::vector<Evaluation> &)>;
+using EvaluateFolds = std::function<Evaluation(
+    double, double, const FitOptions &, const std::vector<Fold> &)>;
+void retry_batch(const std::vector<Weight> &, std::vector<Evaluation> &,
+                 const std::vector<Fold> &, const FitOptions &,
+                 size_t &remaining, bool legacy, const EvaluateFolds &);
+Search search(bool strict, ScoreRule rule,
+              const std::function<Evaluation(double, double)> &evaluate,
+              size_t workers = 1, const RetryBatch &retry = {},
+              const string &policy = "neighborhood");
 } // namespace fsb

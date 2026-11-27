@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 builddir=${1:-build}
 dest=${2:-dist}
-name=fsblup-0.4.2-linux-x86_64-glibc2.34
+name=fsblup-0.4.3-linux-x86_64-glibc2.34
 mkdir -p "$dest"
 stage=$(mktemp -d "$dest/.package.XXXXXX")
 trap 'rm -rf "$stage"' EXIT

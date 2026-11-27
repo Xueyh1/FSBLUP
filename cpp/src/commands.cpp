@@ -374,7 +374,7 @@ Labels labels_from_file(const fs::path &path, const Ids &ids, bool &temporal) {
 struct Tuning {
   Search search;
   Ids fold_columns;
-  string metric, coverage, domain, score_policy, search_policy;
+  string metric, coverage, domain, score_policy, search_policy, retry_policy;
   ScoreRule rule;
   size_t scorable, budget;
 };
@@ -522,7 +522,8 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
       std::count_if(folds.begin(), folds.end(),
                     [](const Fold &f) { return f.reason.empty(); });
   size_t budget = integer(opt.get("retry-probes", "0"), 0), remaining = budget;
-  auto evaluate = [&](double a, double b, const FitOptions &fold_options) {
+  auto evaluate = [&](double a, double b, const FitOptions &fold_options,
+                      const std::vector<Fold> &folds) {
     if (cache) {
       Evaluation ev;
       ev.scores.resize(folds.size(), NAN);
@@ -553,48 +554,13 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
     return evaluate_weight(*reference, a, b, x, y, truth, folds, metric, policy,
                            &fold_options);
   };
-  auto retry = [&](double a, double b, Evaluation &ev) {
-    if (opts.trace != "hutchinson")
-      return;
-    size_t ceiling = opts.max_probes;
-    string history;
-    size_t start = 0;
-    for (;;) {
-      ev.probe_limit = ceiling;
-      if (!history.empty())
-        history += " | ";
-      history += std::to_string(ceiling) + ":" +
-                 (ev.reason.empty() ? "ok" : ev.reason);
-      size_t rhs = 0, mv = 0, probes = 0;
-      for (size_t j = start; j < ev.fits.size(); ++j) {
-        rhs += ev.fits[j].rhs;
-        mv += ev.fits[j].matvec;
-        probes += ev.fits[j].probes;
-      }
-      start = ev.fits.size();
-      history += " [rhs=" + std::to_string(rhs) +
-                 ",matvec=" + std::to_string(mv) +
-                 ",probes=" + std::to_string(probes) + "]";
-      ev.attempts = history;
-      if (!ev.probe_exhausted || !scorable ||
-          ceiling > remaining / scorable / 2)
-        break;
-      ceiling *= 2;
-      size_t cost = scorable * ceiling;
-      remaining -= cost;
-      auto next_options = fold_options;
-      next_options.max_probes = ceiling;
-      auto next = evaluate(a, b, next_options);
-      next.retry_spent = ev.retry_spent + cost;
-      next.fold_attempts += ev.fold_attempts;
-      next.successful_fold_fits += ev.successful_fold_fits;
-      next.fold_seconds += ev.fold_seconds;
-      next.timing.add(ev.timing);
-      ev.fits.insert(ev.fits.end(), std::make_move_iterator(next.fits.begin()),
-                     std::make_move_iterator(next.fits.end()));
-      next.fits = std::move(ev.fits);
-      ev = std::move(next);
-    }
+  auto retry_policy = opt.get("retry-policy", "rounds");
+  require(retry_policy == "rounds" || retry_policy == "legacy",
+          "invalid retry policy");
+  auto retry = [&](const std::vector<Weight> &points,
+                   std::vector<Evaluation> &ev) {
+    retry_batch(points, ev, folds, fold_options, remaining,
+                retry_policy == "legacy", evaluate);
   };
   auto geometry = opt.get("search-policy", "neighborhood");
   require(geometry == "legacy" || geometry == "grid" ||
@@ -606,7 +572,7 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
   else
     result = search(
         opt.has("strict-simplex"), rule,
-        [&](double a, double b) { return evaluate(a, b, fold_options); },
+        [&](double a, double b) { return evaluate(a, b, fold_options, folds); },
         tm.weight_workers, retry, geometry);
 
   std::vector<FitAudit> audits;
@@ -636,6 +602,7 @@ Tuning tune(const Options &opt, const Table &t, const Phenotype &p,
           opt.has("strict-simplex") ? "simplex" : "historical",
           score_policy,
           geometry,
+          retry_policy,
           rule,
           scorable,
           budget};
@@ -706,7 +673,8 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
            "blocks\tmax_relative_normF\tfull_nearpd_blocks\tfull_max_relative_"
            "normF\trequested_domain\tbackend\tcandidate_status\tsearch_"
            "coverage\tprobe_attempts\tretry_reserved_probes\tfolds_scored_last_"
-           "attempt\tfold_attempts\tfolds_completed\n";
+           "attempt\tfold_attempts\tfolds_completed\tretry_used\tdiscarded_fit_"
+           "probes\n";
     for (size_t i = 0; i < count; ++i) {
       const auto &v = trials[i];
       const auto &e = v.result;
@@ -739,13 +707,13 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
             << '\t' << e.retry_spent << '\t'
             << std::count_if(e.scores.begin(), e.scores.end(),
                              [](double x) { return std::isfinite(x); })
-            << '\t' << e.fold_attempts << '\t' << e.successful_fold_fits
-            << '\n';
+            << '\t' << e.fold_attempts << '\t' << e.successful_fold_fits << '\t'
+            << e.retry_used << '\t' << e.discarded_probes << '\n';
     }
   });
   size_t scored = 0, completed = 0, probe_failed = 0, numerical = 0,
          invalid = 0, unavailable = 0, spent = 0, attempted = 0,
-         physical_completed = 0;
+         physical_completed = 0, used = 0, discarded = 0;
   for (const auto &v : trials) {
     const auto &e = v.result;
     scored += e.reason.empty() && std::isfinite(e.value);
@@ -757,6 +725,8 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
     invalid += e.outcome == "invalid";
     unavailable += e.outcome == "uncertified";
     spent += e.retry_spent;
+    used += e.retry_used;
+    discarded += e.discarded_probes;
     attempted += e.fold_attempts;
     physical_completed += e.successful_fold_fits;
   }
@@ -770,7 +740,8 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
          "point\tfolds_completed\tprobe_exhausted\tnumerical_failures\tinvalid_"
          "kernel\tuncertified\tretry_budget\tretry_reserved\tfolds_scored_last_"
          "attempt\tfold_attempts\tfull_invalid\tfull_uncertified\tvalidation_"
-         "unscorable\tsearch_policy\n"
+         "unscorable\tsearch_policy\tretry_policy\tretry_used\tretry_"
+         "unused\tdiscarded_fit_probes\n"
       << t.metric << '\t'
       << (selected < count ? trials[selected].result.value : NAN) << '\t'
       << result.stop << '\t' << field(t.coverage) << '\t' << result.alpha
@@ -787,7 +758,8 @@ Fusion select_fusion(const Tuning &t, const Layers &layers, const fs::path &dir,
       << failures - std::count(uncertified.begin(), uncertified.end(), true)
       << '\t' << std::count(uncertified.begin(), uncertified.end(), true)
       << '\t' << t.fold_columns.size() - t.scorable << '\t' << t.search_policy
-      << '\n';
+      << '\t' << t.retry_policy << '\t' << used << '\t' << spent - used << '\t'
+      << discarded << '\n';
   });
   if (!std::isfinite(result.best))
     throw TuningFailure(count

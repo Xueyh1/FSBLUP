@@ -250,9 +250,7 @@ static bool refinement_done(const ScoreRule &rule, double old, double best,
 }
 Search search(bool strict, ScoreRule rule,
               const std::function<Evaluation(double, double)> &evaluate,
-              size_t workers,
-              const std::function<void(double, double, Evaluation &)> &retry,
-              const string &policy) {
+              size_t workers, const RetryBatch &retry, const string &policy) {
   require(workers > 0, "invalid worker count");
   Search out;
   using Point = std::pair<double, double>;
@@ -281,11 +279,11 @@ Search search(bool strict, ScoreRule rule,
       for (auto &task : tasks)
         task.get();
     }
+    if (retry)
+      retry(batch, results);
     for (size_t i = 0; i < batch.size(); ++i) {
       auto [a, b] = batch[i];
       auto &e = results[i];
-      if (retry)
-        retry(a, b, e);
       double v = e.value;
       if (e.reason.empty() && std::isfinite(v) &&
           (!std::isfinite(out.best) || rule.better(v, out.best))) {

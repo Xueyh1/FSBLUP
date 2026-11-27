@@ -2,14 +2,14 @@
 #include <csignal>
 using namespace fsb;
 namespace {
-const char *help = R"(fsblup 0.4.2
+const char *help = R"(fsblup 0.4.3
   prepare [--snp-format f64|2bit] --ped PED --snp SNP --omics OMICS [--omics-type generic|fpkm] --out CACHE
   fit --cache CACHE --pheno TABLE --trait TRAIT [fit options] --out DIR
   build --ped PED --snp SNP --omics OMICS [--omics-type generic|fpkm] --out DIR
   fuse --A A --G G --O O --alpha AWT --beta BWT --out DIR
   fit --pheno TABLE --id ID --trait TRAIT --A A --G G --O O --out DIR
       [--alpha AWT --beta BWT | --folds N --repeats N --seed N | --folds-file FILE
-       | --year CUTOFF | --ngen CUTOFF] [--metric cor|rmse|auc] [--score-col COL] [--score-policy relative|legacy] [--retry-probes TOTAL]
+       | --year CUTOFF | --ngen CUTOFF] [--metric cor|rmse|auc] [--score-col COL] [--score-policy relative|legacy] [--retry-probes TOTAL] [--retry-policy rounds|legacy] [--search-policy neighborhood|grid|legacy]
       [--covar COL,...] [--factor COL,...] [--parallel blas|weights] [--strict-simplex] [--write-k]
   fit: --solver pcg|direct --varcomp ai-reml|em-reml|profile-reml|fixed
        --trace exact|hutchinson --probes N --max-probes N --probe-seed N --slq-depth N --lambda L --preconditioner jacobi|identity|nystrom --pcg-rtol R --pcg-atol A
@@ -51,7 +51,7 @@ int main(int argc, char **argv) {
       return 0;
     }
     if (string(argv[1]) == "--version") {
-      std::cout << "fsblup 0.4.2\n";
+      std::cout << "fsblup 0.4.3\n";
       return 0;
     }
     string cmd = argv[1];
