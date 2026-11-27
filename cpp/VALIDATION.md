@@ -39,6 +39,8 @@ srun -n1 -c4 --mem=8G bash validation/v042/debug.sh new-debug
 
 Linux x86_64 发布程序在无 R 的 UBI 9 Minimal、glibc 2.34 根文件系统中运行了实际 nearPD、嵌套搜索、缓存估参及官方 C 模式 age 示例。与锁定的 Matrix 1.7-0、rrBLUP 4.6.3 独立参照比较，1407 阶修正 K 的最大绝对差为 5.98×10⁻¹⁴，相对 Frobenius 差为 5.24×10⁻¹⁴，178 训练及 20 留出个体在同 λ 下与独立 GLS 的最大差小于 10⁻¹⁰。[隔离运行](validation/v042/clean-smoke.log) · [逐项数值结果](validation/v042/official.json)
 
+正式发布二进制已完成 50000 SNP、120000 参考、30000 候选的完整两折多权重 CV 与全群拟合。每一折独立估参，19 个候选中 10 个完成两折。全部 150000 行预测与 0.4.1 基线记录逐字节一致。[完整宽作业验证](PERFORMANCE.md) · [候选失败与重试费用](validation/v042/wide-search.tsv)
+
 ## 0.4.1 数值回归
 
 2026-11-27 开工时本地与远程 cpp 均为 `f21497f82830e01a465fa6b539b89f825a63284a`，工作树干净。旧版 14 项 CTest 全部通过。工作区没有 `FSBLUP_0.4.0_cpp_audit_and_replay.zip`，解析例按规划给定谱重建，其余使用仓库原始数据或种子固定的模拟数据。[旧版基线](validation/v041/baseline.log)

@@ -1,0 +1,3 @@
+version	fit_status	train	candidate	SNP	seed	folds	visited	scored	completed	alpha	beta	rmse	spend	wall_s	rss_KiB	rhs	matvec	probes	feature_B	verified_B	calibration_B	preload_B	training_B	cross_B
+0.4.1	approx-interior	120000	30000	50000	42	2	19	10	20	0.5	0.25	1.5093990628158189	0	9312.9498502539991	47992728	210	13272	156	35037000000	1901519503	NA	NA	NA	NA
+0.4.2	approx-interior	120000	30000	50000	42	2	19	10	20	0.5	0.25	1.5093990628158216	32	8727.1886267200007	47998512	210	13344	172	35037000000	1901519503	0	19599360000	0	15437640000

@@ -1,0 +1,9 @@
+master
+glibc 2.34
+CPU(s):                                  64
+Model name:                              Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz
+Thread(s) per core:                      2
+Core(s) per socket:                      16
+Socket(s):                               2
+Cpus_allowed_list:	1,3,5,7,9,11,13,15,33,35,37,39,41,43,45,47
+["taskset", "-c", "0", "/storage2/xueyh/TempWork/20261126_fsblup_cpp/FSBLUP/cpp/runs/v042/fsblup-041", "fit", "--cache", "runs/v042/before/reproduce_operators/stream/cache", "--cache-backend", "operator", "--cache-storage", "stream", "--pheno", "runs/v042/before/reproduce_operators/stream/pheno", "--trait", "trait", "--folds-file", "runs/v042/before/reproduce_operators/stream/folds", "--metric", "rmse", "--strict-simplex", "--parallel", "weights", "--memory-mb", "1024", "--varcomp", "fixed", "--lambda", "1", "--threads", "1", "--log-level", "off", "--out", "runs/v042/final/measured/small-old-1-0"]

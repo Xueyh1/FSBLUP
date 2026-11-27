@@ -49,6 +49,21 @@ sbatch -n1 -c16 --mem=68G validation/v042/wide-cv.sh "$RELEASE_FSBLUP" runs/pcg/
 
 重试允许先前失败的点参与本轮归并，下一轮生成的候选集合可以随之改变。两种种子都使用额外 256 时，共同完成评分的 31 点中最大权重秩差为 1，全部 ID 的最大 Δu 绝对值为 0.10989，候选最大秩差为 156。按 ID 的带符号差保存在原始记录包的 `final/ID-deltas.tsv.gz` 中。[预算扫表](validation/v042/probe-budgets.tsv) · [候选权重排序](validation/v042/candidate-ranks.tsv) · [跨种子预测与排名](validation/v042/probe-ranking.tsv)
 
+### 发布二进制的 150000 个体复验
+
+Slurm 作业 31651 直接执行打包安装后的 x86_64 Linux 程序，ELF SHA-256 为 `413ec36542dc70773ec182b74bbd7f3daebd01f9292c8bdd31d48b1bf6c7731c`。沿用 0.4.1 的 50000 SNP、9 个组学特征、相同的缓存清单、表型与外部折表。120000 参考、30000 候选，两折各 60000 训练和 60000 验证。节点分配 16 个逻辑 CPU 与 68 GiB，程序设置 8 个 BLAS 线程、resident、65536 MiB、随机 AI、探针种子 42、初始 4 个探针、基础上限 8、Lanczos 深度 18 和批宽 4。新版使用 relative RMSE，评分尺度为 1.57814427，另给整个搜索 32 个重试额度。[输入与程序指纹](validation/v042/wide-inputs.sha256) · [节点与亲和性](validation/v042/wide-environment.txt)
+
+访问初始 15 点和细化 4 点。认证覆盖为 complete，10 点完成两折，9 点耗尽探针预算，无其他数值失败。总计尝试 30 折、成功 20 折。按原遍历顺序重试 (0,0)，为两折预留 16×2；该点首折在 8 个探针时用 48 次 matvec，上限提高至 16 后再用 72 次仍未通过精度要求。该点保留失败身份，均分为空。0.4.1 对照共尝试 29 折。两版都在有效候选中选中 (.5,.25)，0.4.2 的两折 RMSE 为 1.51193056 和 1.50686756，均分 1.50939906，搜索阶段 7822.15 s。细化改进低于停止阈值，选中点通过全群认证。[逐点分数、预算与成本](validation/v042/wide-search.tsv) · [覆盖和完成数](validation/v042/wide-tuning.tsv)
+
+全群重新估参成功，状态为 approx-interior，AI 更新 7 次，Vu=2.0324701262、Ve=1.3858328276、λ=0.6818465914。与上次作业的 150000 个 ID、角色、u、yhat 逐行比较，全部一致，包含 30000 个候选。0.4.2 的端到端墙钟为 **8727.19 s（2:25:27）**，峰值 RSS **47998512 KiB（45.78 GiB）**。累计 210 个 RHS、13344 次按列计的 matvec，各次折尝试和最终拟合的探针前缀数之和为 172。特征读取 35037000000 B，包括训练预载 19599360000 B、交叉预测 15437640000 B；训练特征已驻留，训练乘法无额外文件读取。另读 1901519503 B 校验缓存。0.4.1 同一数据的墙钟为 9312.95 s，峰值 RSS 为 47992728 KiB；两次宽作业各测一次，节点负载、重试及评分规则均影响耗时，配对速度比较见上方三次重复表。[两版完整计量](validation/v042/wide.tsv) · [最终模型](validation/v042/wide-model.tsv) · [逐折求解成本](validation/v042/wide-fold-fits.tsv) · [逐 ID 差值汇总](validation/v042/wide-predictions.tsv)
+
+原始记录压缩包包含冻结基线的五份重放、最终各轮输入输出、每次性能采样与 CPU 亲和性、探针预算面板、`final/ID-deltas.tsv.gz`、检测器日志、C 堆快照，以及宽搜索和参考版本的 15 万行预测。开发作业 31204 的中止日志单列在 debug 目录。上表仅计入正式程序从头完成的作业 31651。宽缓存由清单指纹定位，公开的模拟生成流程见 PCG.md。
+
+```bash
+python3 tools/v042_collect.py runs/v042/final summary --wide-reference runs/v041/wide-cv
+python3 tools/v042_archive.py runs/v042 runs/v041/wide-cv dist/fsblup-0.4.2-validation.tar.gz
+```
+
 ## 0.4.1 缓存、交叉预测与选权
 
 以下为同一 Slurm 节点、同一输入缓存与 ID、单线程的一次配对实测。表内 RSS 为整个进程的峰值，包含动态库和分配器。内存预算约束算法工作区。完整表另列训练与候选数、保留 SNP、后端、搜索域、预算、RHS、matvec、特征与校验字节以及墙钟。[逐次实测](validation/v041/performance.tsv)

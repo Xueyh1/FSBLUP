@@ -6,6 +6,8 @@ Linux 命令行工具，用于单性状、每个个体一条表型记录的融�
 
 RMSE 默认以参考群评分列的均方根为单位比较候选，`search.tsv` 中的折分数和均分仍采用原始单位。`--score-policy legacy` 可复现 0.4.1 的绝对阈值。随机自动选权可用 `--retry-probes N` 指定整个搜索的额外探针预算，默认 0。完成本批候选的初次评估后按原遍历顺序重试；每次上限翻倍，先预留全部可评分折所需的探针额度。`tuning.tsv` 分别给出认证覆盖、完整评分候选数、完成折数及失败类别。[选权和预算实测](PERFORMANCE.md)
 
+已用发布包二进制完成 150000 个体、50000 SNP 的两折复验。完整 19 点的评分覆盖、失败原因、逐折费用及与 0.4.1 的逐 ID 比较见[正式 Slurm 验收](PERFORMANCE.md)。
+
 0.4.1 在每个训练折平衡固定效应列，并在去除固定效应后的表型上估计方差。系数按输入单位输出。精确 AI 与 EM 复用误差对比谱检查竞争峰，`pcg_summary.tsv` 区分请求初值与实际初值，`reml_trace.tsv` 记录找到的竞争峰和迭代终点。Hutchinson 继续使用训练算子。[解析与官方示例验收](VALIDATION.md)
 
 默认选权保留历史细化域，`--strict-simplex` 将各轮限制在单纯形。检查 `tuning.tsv` 的 `requested_domain`、`backend` 和 `search_coverage`。当预算只能认证部分候选时，`partial` 表示所选权重只在已覆盖候选中获胜。`search_coverage` 描述请求域的认证覆盖，`search.tsv` 的 `valid`、`candidate_status` 与逐折原因记录实际完成评分的候选。固定权重求解超限返回非零退出码，失败输出保留 `failure.txt`、迭代摘要及指定的目录内日志。
