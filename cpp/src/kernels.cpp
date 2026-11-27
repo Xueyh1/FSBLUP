@@ -224,8 +224,8 @@ mat adjusted(const mat &raw, PdPolicy policy, PdDiagnostics diagnostics,
             d.block + ": covariance still singular after jitter");
     d.min_used = d.min_raw + jitter;
   } else if (policy == PdPolicy::near_pd && !cholesky_succeeds(k)) {
-    require(diagnostics != PdDiagnostics::certification,
-            "complete-population nearPD required");
+    if (diagnostics == PdDiagnostics::certification)
+      throw FullProjectionRequired("complete-population nearPD required");
     // Match R's adj_pos order: jitter once, then nearPD on failure.
     NearPdResult result;
     try {

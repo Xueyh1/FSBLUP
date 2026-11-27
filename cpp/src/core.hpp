@@ -64,6 +64,9 @@ struct PdBlock {
   PdTimes timing;
   double norm_f = 0., relative_norm_f = 0., max_abs_change = 0.;
 };
+struct FullProjectionRequired : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
 struct ProbeExhausted : std::runtime_error {
   using std::runtime_error::runtime_error;
 };

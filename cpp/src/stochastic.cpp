@@ -185,10 +185,12 @@ struct ProbeSet {
     while (rules.size() < count) {
       if (o.slq_batch > 1) {
         build_panel(std::min(count - rules.size(), o.slq_batch));
+        audit.probes = rules.size();
         continue;
       }
       vec z = probe(rules.size());
       rules.push_back(build(z));
+      audit.probes = rules.size();
       if (!anchors.empty())
         energy_deviation.push_back(arma::square(directions.t() * z) - 1);
     }
@@ -607,7 +609,6 @@ Estimates estimate_stochastic(const TrainKernel &k, const mat &x, const vec &y,
   int it = 0;
   while (it <= o.max_reml) {
     a.updates = it;
-    a.probes = count;
     auto cur = evaluate(probes, x, y, g, e, count, true);
     double lik = arma::mean(cur.lik) + .5 * design_logdet;
     vec scaled = cur.score % units / df;

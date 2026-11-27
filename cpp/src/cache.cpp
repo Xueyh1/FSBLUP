@@ -1105,12 +1105,10 @@ PopulationKernel Cache::prepare(const Ids &pop, double a, double b,
                  .combine(a, b, nullptr, policy,
                           na == n ? PdDiagnostics::full
                                   : PdDiagnostics::certification);
+  } catch (const FullProjectionRequired &ex) {
+    layers = {};
+    return dense_certificate(ex.what(), na);
   } catch (const std::runtime_error &ex) {
-    if (string(ex.what()).find("complete-population nearPD required") !=
-        string::npos) {
-      layers = {};
-      return dense_certificate("complete-population nearPD required", na);
-    }
     throw std::runtime_error(
         "mode C: " + string(ex.what()) +
         "; full dense MiB=" + std::to_string(160. * n * n / 1048576.) +

@@ -121,5 +121,8 @@ void retry_batch(const std::vector<Weight> &points,
         e.probe_exhausted = true;
       }
   }
+  for (auto &e : results)
+    if (!e.reason.empty())
+      e.discarded_probes += e.kept_probes;
 }
 } // namespace fsb
